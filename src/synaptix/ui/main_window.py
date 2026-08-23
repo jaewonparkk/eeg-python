@@ -52,7 +52,8 @@ class MainWindow(QMainWindow):
         )
 
         layout.addWidget(
-            self.viewer
+            self.viewer,
+            stretch=1,
         )
 
         container = QWidget()
