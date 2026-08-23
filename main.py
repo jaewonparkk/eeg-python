@@ -8,16 +8,10 @@ from synaptix.ui.main_window import MainWindow
 def main():
     app = QApplication(sys.argv)
 
-    app.setApplicationName(
-        "Synaptix EEG Workbench"
-    )
-
     window = MainWindow()
     window.show()
 
-    sys.exit(
-        app.exec()
-    )
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

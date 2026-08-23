@@ -1,0 +1,16 @@
+README.md
+pyproject.toml
+src/synaptix/__init__.py
+src/synaptix/app.py
+src/synaptix.egg-info/PKG-INFO
+src/synaptix.egg-info/SOURCES.txt
+src/synaptix.egg-info/dependency_links.txt
+src/synaptix.egg-info/top_level.txt
+src/synaptix/core/__init__.py
+src/synaptix/core/recording.py
+src/synaptix/io/__init__.py
+src/synaptix/io/loaders.py
+src/synaptix/storage/__init__.py
+src/synaptix/ui/__init__.py
+src/synaptix/ui/eeg_viewer.py
+src/synaptix/ui/main_window.py
