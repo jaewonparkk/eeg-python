@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from synaptix.core.recording import Recording
+from synaptix.models.artifact import ArtifactCandidate
 
 
 class EEGViewer(QWidget):
@@ -24,22 +25,34 @@ class EEGViewer(QWidget):
     def __init__(self):
         super().__init__()
 
+        # -----------------------------------------------------
+        # State
+        # -----------------------------------------------------
+
         self.recording: Recording | None = None
 
         self.current_start = 0.0
         self.window_seconds = self.DEFAULT_WINDOW_SECONDS
         self.amplitude_scale = 1.0
 
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.artifact_candidates: list[ArtifactCandidate] = []
+        self.selected_candidate: ArtifactCandidate | None = None
+
+        self.setFocusPolicy(
+            Qt.FocusPolicy.StrongFocus
+        )
 
         self._build_ui()
 
-    # ---------------------------------------------------------
+    # =========================================================
     # UI
-    # ---------------------------------------------------------
+    # =========================================================
 
     def _build_ui(self):
-        # ---------- Plot ----------
+        # -----------------------------------------------------
+        # EEG Plot
+        # -----------------------------------------------------
+
         self.plot_widget = pg.PlotWidget()
 
         self.plot_widget.setLabel(
@@ -59,36 +72,52 @@ class EEGViewer(QWidget):
             alpha=0.15,
         )
 
-        # Prevent users from accidentally panning vertically
         self.plot_widget.setMouseEnabled(
             x=True,
             y=False,
         )
 
-        # ---------- Navigation ----------
-        self.previous_button = QPushButton("◀")
+        # -----------------------------------------------------
+        # Navigation
+        # -----------------------------------------------------
+
+        self.previous_button = QPushButton(
+            "◀"
+        )
+
         self.previous_button.clicked.connect(
             self.previous_window
         )
 
-        self.next_button = QPushButton("▶")
+        self.next_button = QPushButton(
+            "▶"
+        )
+
         self.next_button.clicked.connect(
             self.next_window
         )
 
-        self.time_label = QLabel("0.0 – 0.0 s")
+        self.time_label = QLabel(
+            "00:00 – 00:00"
+        )
 
         self.time_slider = QSlider(
             Qt.Orientation.Horizontal
         )
 
-        self.time_slider.setRange(0, 0)
+        self.time_slider.setRange(
+            0,
+            0,
+        )
 
         self.time_slider.valueChanged.connect(
             self._slider_changed
         )
 
-        # ---------- Window size ----------
+        # -----------------------------------------------------
+        # Window Size
+        # -----------------------------------------------------
+
         self.window_selector = QComboBox()
 
         self.window_selector.addItems(
@@ -108,7 +137,10 @@ class EEGViewer(QWidget):
             self._window_size_changed
         )
 
-        # ---------- Amplitude ----------
+        # -----------------------------------------------------
+        # Amplitude
+        # -----------------------------------------------------
+
         self.amplitude_label = QLabel(
             "Amplitude: 100%"
         )
@@ -130,7 +162,18 @@ class EEGViewer(QWidget):
             self._amplitude_changed
         )
 
-        # ---------- Channel selector ----------
+        # -----------------------------------------------------
+        # Channel Selector
+        # -----------------------------------------------------
+
+        channel_title = QLabel(
+            "Channels"
+        )
+
+        channel_title.setStyleSheet(
+            "font-weight: 600;"
+        )
+
         self.channel_list = QListWidget()
 
         self.channel_list.setMaximumWidth(
@@ -141,11 +184,10 @@ class EEGViewer(QWidget):
             self._channels_changed
         )
 
-        channel_title = QLabel(
-            "Channels"
-        )
+        # -----------------------------------------------------
+        # Navigation Layout
+        # -----------------------------------------------------
 
-        # ---------- Control layout ----------
         navigation_layout = QHBoxLayout()
 
         navigation_layout.addWidget(
@@ -173,6 +215,10 @@ class EEGViewer(QWidget):
             self.window_selector
         )
 
+        # -----------------------------------------------------
+        # Amplitude Layout
+        # -----------------------------------------------------
+
         amplitude_layout = QHBoxLayout()
 
         amplitude_layout.addWidget(
@@ -180,10 +226,14 @@ class EEGViewer(QWidget):
         )
 
         amplitude_layout.addWidget(
-            self.amplitude_slider
+            self.amplitude_slider,
+            stretch=1,
         )
 
-        # ---------- Main content ----------
+        # -----------------------------------------------------
+        # Plot Layout
+        # -----------------------------------------------------
+
         plot_layout = QVBoxLayout()
 
         plot_layout.addWidget(
@@ -199,6 +249,10 @@ class EEGViewer(QWidget):
             amplitude_layout
         )
 
+        # -----------------------------------------------------
+        # Channel Layout
+        # -----------------------------------------------------
+
         channel_layout = QVBoxLayout()
 
         channel_layout.addWidget(
@@ -206,8 +260,13 @@ class EEGViewer(QWidget):
         )
 
         channel_layout.addWidget(
-            self.channel_list
+            self.channel_list,
+            stretch=1,
         )
+
+        # -----------------------------------------------------
+        # Main Layout
+        # -----------------------------------------------------
 
         content_layout = QHBoxLayout()
 
@@ -224,9 +283,9 @@ class EEGViewer(QWidget):
             content_layout
         )
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Recording
-    # ---------------------------------------------------------
+    # =========================================================
 
     def set_recording(
         self,
@@ -235,6 +294,7 @@ class EEGViewer(QWidget):
         self.recording = recording
 
         self.current_start = 0.0
+        self.selected_candidate = None
 
         self._populate_channels()
         self._configure_time_slider()
@@ -245,7 +305,9 @@ class EEGViewer(QWidget):
         if self.recording is None:
             return
 
-        self.channel_list.blockSignals(True)
+        self.channel_list.blockSignals(
+            True
+        )
 
         self.channel_list.clear()
 
@@ -274,16 +336,55 @@ class EEGViewer(QWidget):
                 item
             )
 
-        self.channel_list.blockSignals(False)
+        self.channel_list.blockSignals(
+            False
+        )
 
-    # ---------------------------------------------------------
-    # Channel selection
-    # ---------------------------------------------------------
+    # =========================================================
+    # Artifact Candidates
+    # =========================================================
+
+    def set_artifact_candidates(
+        self,
+        candidates: list[ArtifactCandidate],
+    ):
+        self.artifact_candidates = candidates
+        self.selected_candidate = None
+
+        self.render()
+
+    def go_to_candidate(
+        self,
+        candidate: ArtifactCandidate,
+    ):
+        """
+        Jump the EEG viewer to the selected artifact candidate.
+        """
+
+        self.selected_candidate = candidate
+
+        midpoint = (
+            candidate.start_seconds
+            + candidate.end_seconds
+        ) / 2
+
+        target_start = (
+            midpoint
+            - self.window_seconds / 2
+        )
+
+        self.set_start_time(
+            target_start
+        )
+
+    # =========================================================
+    # Channel Selection
+    # =========================================================
 
     def selected_channels(
         self,
     ) -> list[str]:
-        channels = []
+        channels: list[str] = []
 
         for index in range(
             self.channel_list.count()
@@ -308,9 +409,9 @@ class EEGViewer(QWidget):
     ):
         self.render()
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Navigation
-    # ---------------------------------------------------------
+    # =========================================================
 
     def previous_window(self):
         if self.recording is None:
@@ -339,12 +440,17 @@ class EEGViewer(QWidget):
 
         max_start = max(
             0.0,
-            self.recording.duration_seconds
-            - self.window_seconds,
+            (
+                self.recording.duration_seconds
+                - self.window_seconds
+            ),
         )
 
         self.current_start = min(
-            max(seconds, 0.0),
+            max(
+                seconds,
+                0.0,
+            ),
             max_start,
         )
 
@@ -352,13 +458,17 @@ class EEGViewer(QWidget):
             self.current_start * 10
         )
 
-        self.time_slider.blockSignals(True)
+        self.time_slider.blockSignals(
+            True
+        )
 
         self.time_slider.setValue(
             slider_value
         )
 
-        self.time_slider.blockSignals(False)
+        self.time_slider.blockSignals(
+            False
+        )
 
         self.render()
 
@@ -368,8 +478,10 @@ class EEGViewer(QWidget):
 
         max_start = max(
             0.0,
-            self.recording.duration_seconds
-            - self.window_seconds,
+            (
+                self.recording.duration_seconds
+                - self.window_seconds
+            ),
         )
 
         # Slider resolution = 0.1 seconds
@@ -388,9 +500,9 @@ class EEGViewer(QWidget):
 
         self.render()
 
-    # ---------------------------------------------------------
-    # Window size
-    # ---------------------------------------------------------
+    # =========================================================
+    # Window Size
+    # =========================================================
 
     def _window_size_changed(
         self,
@@ -408,9 +520,9 @@ class EEGViewer(QWidget):
             self.current_start
         )
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Amplitude
-    # ---------------------------------------------------------
+    # =========================================================
 
     def _amplitude_changed(
         self,
@@ -426,15 +538,17 @@ class EEGViewer(QWidget):
 
         self.render()
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Rendering
-    # ---------------------------------------------------------
+    # =========================================================
 
     def render(self):
         if self.recording is None:
             return
 
-        channels = self.selected_channels()
+        channels = (
+            self.selected_channels()
+        )
 
         self.plot_widget.clear()
 
@@ -442,6 +556,7 @@ class EEGViewer(QWidget):
             self.time_label.setText(
                 "No channels selected"
             )
+
             return
 
         data, times = (
@@ -455,12 +570,22 @@ class EEGViewer(QWidget):
         if data.size == 0:
             return
 
-        # EEG volts -> microvolts
-        data_uv = data * 1_000_000
+        # -----------------------------------------------------
+        # MNE stores EEG in volts.
+        # Convert to microvolts for display.
+        # -----------------------------------------------------
 
-        # Robust amplitude estimate.
-        # Avoids one giant artifact determining
-        # all of the vertical spacing.
+        data_uv = (
+            data * 1_000_000
+        )
+
+        # -----------------------------------------------------
+        # Calculate robust vertical spacing.
+        #
+        # Using the 95th percentile prevents one giant artifact
+        # from spreading all channels extremely far apart.
+        # -----------------------------------------------------
+
         robust_amplitude = float(
             np.percentile(
                 np.abs(data_uv),
@@ -473,16 +598,21 @@ class EEGViewer(QWidget):
             50.0,
         )
 
-        axis_ticks = []
-
         channel_count = len(
             channels
         )
 
+        axis_ticks: list[
+            tuple[float, str]
+        ] = []
+
+        # -----------------------------------------------------
+        # Plot EEG channels
+        # -----------------------------------------------------
+
         for index, channel in enumerate(
             channels
         ):
-            # First channel should appear at top
             offset = (
                 channel_count
                 - index
@@ -498,6 +628,9 @@ class EEGViewer(QWidget):
             self.plot_widget.plot(
                 times,
                 signal,
+                pen=pg.mkPen(
+                    width=1,
+                ),
             )
 
             axis_ticks.append(
@@ -507,7 +640,10 @@ class EEGViewer(QWidget):
                 )
             )
 
-        # Channel names on Y axis
+        # -----------------------------------------------------
+        # Channel Names
+        # -----------------------------------------------------
+
         left_axis = (
             self.plot_widget.getAxis(
                 "left"
@@ -518,10 +654,23 @@ class EEGViewer(QWidget):
             [axis_ticks]
         )
 
+        # -----------------------------------------------------
+        # Artifact Highlights
+        # -----------------------------------------------------
+
+        self._draw_artifact_regions()
+
+        # -----------------------------------------------------
+        # Ranges
+        # -----------------------------------------------------
+
         start = self.current_start
 
         end = min(
-            start + self.window_seconds,
+            (
+                start
+                + self.window_seconds
+            ),
             self.recording.duration_seconds,
         )
 
@@ -537,6 +686,10 @@ class EEGViewer(QWidget):
             padding=0.02,
         )
 
+        # -----------------------------------------------------
+        # Time Label
+        # -----------------------------------------------------
+
         self.time_label.setText(
             f"{self._format_time(start)}"
             f" – "
@@ -545,9 +698,134 @@ class EEGViewer(QWidget):
             f"{self._format_time(self.recording.duration_seconds)}"
         )
 
-    # ---------------------------------------------------------
-    # Keyboard
-    # ---------------------------------------------------------
+    def _draw_artifact_regions(self):
+        """
+        Draw artifact candidate regions that overlap the current
+        visible EEG window.
+        """
+
+        if not self.artifact_candidates:
+            return
+
+        window_start = (
+            self.current_start
+        )
+
+        window_end = (
+            self.current_start
+            + self.window_seconds
+        )
+
+        for candidate in self.artifact_candidates:
+            overlaps_window = (
+                candidate.end_seconds
+                >= window_start
+                and candidate.start_seconds
+                <= window_end
+            )
+
+            if not overlaps_window:
+                continue
+
+            # -------------------------------------------------
+            # Candidate state styling
+            # -------------------------------------------------
+
+            if (
+                candidate
+                is self.selected_candidate
+            ):
+                brush = pg.mkBrush(
+                    255,
+                    170,
+                    40,
+                    80,
+                )
+
+                pen = pg.mkPen(
+                    255,
+                    150,
+                    20,
+                    220,
+                    width=2,
+                )
+
+                z_value = -4
+
+            elif candidate.accepted is True:
+                brush = pg.mkBrush(
+                    50,
+                    190,
+                    110,
+                    45,
+                )
+
+                pen = pg.mkPen(
+                    50,
+                    160,
+                    100,
+                    120,
+                )
+
+                z_value = -8
+
+            elif candidate.accepted is False:
+                brush = pg.mkBrush(
+                    130,
+                    130,
+                    130,
+                    25,
+                )
+
+                pen = pg.mkPen(
+                    120,
+                    120,
+                    120,
+                    80,
+                )
+
+                z_value = -9
+
+            else:
+                brush = pg.mkBrush(
+                    255,
+                    70,
+                    70,
+                    50,
+                )
+
+                pen = pg.mkPen(
+                    220,
+                    60,
+                    60,
+                    140,
+                )
+
+                z_value = -7
+
+            region = pg.LinearRegionItem(
+                values=(
+                    candidate.start_seconds,
+                    candidate.end_seconds,
+                ),
+                orientation="vertical",
+                movable=False,
+                brush=brush,
+                pen=pen,
+            )
+
+            # Put region behind waveform traces.
+            region.setZValue(
+                z_value
+            )
+
+            self.plot_widget.addItem(
+                region
+            )
+
+    # =========================================================
+    # Keyboard Navigation
+    # =========================================================
 
     def keyPressEvent(
         self,
@@ -571,9 +849,9 @@ class EEGViewer(QWidget):
             event
         )
 
-    # ---------------------------------------------------------
+    # =========================================================
     # Helpers
-    # ---------------------------------------------------------
+    # =========================================================
 
     @staticmethod
     def _format_time(
@@ -584,13 +862,24 @@ class EEGViewer(QWidget):
             int(seconds),
         )
 
-        minutes = (
-            seconds // 60
+        hours = (
+            seconds // 3600
         )
+
+        minutes = (
+            seconds % 3600
+        ) // 60
 
         remaining_seconds = (
             seconds % 60
         )
+
+        if hours > 0:
+            return (
+                f"{hours:02d}:"
+                f"{minutes:02d}:"
+                f"{remaining_seconds:02d}"
+            )
 
         return (
             f"{minutes:02d}:"
