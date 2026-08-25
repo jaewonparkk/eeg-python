@@ -1,4 +1,5 @@
 from PySide6.QtCore import Qt
+
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -7,49 +8,71 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSplitter,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from synaptix.core.recording import Recording
-from synaptix.models.thresholds import DetectionThresholds
-
-from synaptix.ui.detection_panel import DetectionPanel
-from synaptix.ui.eeg_viewer import EEGViewer
-from synaptix.ui.review_panel import ReviewPanel
-from synaptix.ui.workers import DetectionWorker
+from synaptix.core.recording import (
+    Recording,
+)
+from synaptix.models.processing import (
+    ProcessingSettings,
+)
+from synaptix.models.thresholds import (
+    DetectionThresholds,
+)
+from synaptix.ui.detection_panel import (
+    DetectionPanel,
+)
+from synaptix.ui.eeg_viewer import (
+    EEGViewer,
+)
+from synaptix.ui.processing_panel import (
+    ProcessingPanel,
+)
+from synaptix.ui.review_panel import (
+    ReviewPanel,
+)
+from synaptix.ui.workers import (
+    DetectionWorker,
+)
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(
+        self,
+    ):
         super().__init__()
 
-        # -----------------------------------------------------
-        # Application State
-        # -----------------------------------------------------
+        # =====================================================
+        # State
+        # =====================================================
 
-        self.recording: Recording | None = None
+        self.recording: (
+            Recording | None
+        ) = None
 
         self.detection_worker: (
             DetectionWorker | None
         ) = None
 
-        # -----------------------------------------------------
+        # =====================================================
         # Window
-        # -----------------------------------------------------
+        # =====================================================
 
         self.setWindowTitle(
             "Synaptix EEG Workbench"
         )
 
         self.resize(
-            1500,
-            900,
+            1600,
+            1000,
         )
 
-        # -----------------------------------------------------
-        # Top Bar
-        # -----------------------------------------------------
+        # =====================================================
+        # Top bar
+        # =====================================================
 
         self.open_button = QPushButton(
             "Open EEG"
@@ -78,42 +101,84 @@ class MainWindow(QMainWindow):
             stretch=1,
         )
 
-        # -----------------------------------------------------
-        # Main Components
-        # -----------------------------------------------------
+        # =====================================================
+        # Left panels
+        # =====================================================
 
         self.detection_panel = (
             DetectionPanel()
         )
 
+        self.processing_panel = (
+            ProcessingPanel()
+        )
+
+        self.left_tabs = (
+            QTabWidget()
+        )
+
+        self.left_tabs.addTab(
+            self.detection_panel,
+            "Detection",
+        )
+
+        self.left_tabs.addTab(
+            self.processing_panel,
+            "Processing",
+        )
+
+        self.left_tabs.setMinimumWidth(
+            270
+        )
+
+        self.left_tabs.setMaximumWidth(
+            330
+        )
+
+        # =====================================================
+        # Viewer
+        # =====================================================
+
         self.viewer = EEGViewer()
+
+        # =====================================================
+        # Review
+        # =====================================================
 
         self.review_panel = (
             ReviewPanel()
         )
 
-        # -----------------------------------------------------
+        # =====================================================
         # Signals
-        # -----------------------------------------------------
+        # =====================================================
 
         self.detection_panel.run_requested.connect(
             self.run_detection
+        )
+
+        self.processing_panel.apply_requested.connect(
+            self.apply_processing_preview
         )
 
         self.review_panel.candidate_selected.connect(
             self.viewer.go_to_candidate
         )
 
-        # -----------------------------------------------------
-        # Main Workspace
-        # -----------------------------------------------------
+        self.review_panel.candidate_updated.connect(
+            self._candidate_updated
+        )
+
+        # =====================================================
+        # Main workspace
+        # =====================================================
 
         self.splitter = QSplitter(
             Qt.Orientation.Horizontal
         )
 
         self.splitter.addWidget(
-            self.detection_panel
+            self.left_tabs
         )
 
         self.splitter.addWidget(
@@ -124,19 +189,16 @@ class MainWindow(QMainWindow):
             self.review_panel
         )
 
-        # Left panel
         self.splitter.setStretchFactor(
             0,
             0,
         )
 
-        # EEG viewer gets most space
         self.splitter.setStretchFactor(
             1,
             1,
         )
 
-        # Right panel
         self.splitter.setStretchFactor(
             2,
             0,
@@ -144,15 +206,15 @@ class MainWindow(QMainWindow):
 
         self.splitter.setSizes(
             [
-                220,
-                950,
                 300,
+                980,
+                320,
             ]
         )
 
-        # -----------------------------------------------------
-        # Root Layout
-        # -----------------------------------------------------
+        # =====================================================
+        # Root
+        # =====================================================
 
         root_layout = QVBoxLayout()
 
@@ -176,22 +238,24 @@ class MainWindow(QMainWindow):
         )
 
     # =========================================================
-    # EEG Loading
+    # Open EEG
     # =========================================================
 
-    def open_eeg(self):
-        # Don't switch recordings while detection is running.
+    def open_eeg(
+        self,
+    ):
         if (
-            self.detection_worker is not None
+            self.detection_worker
+            is not None
             and self.detection_worker.isRunning()
         ):
             QMessageBox.warning(
                 self,
                 "Detection in progress",
                 (
-                    "Wait for the current artifact "
+                    "Wait for the current candidate "
                     "scan to finish before opening "
-                    "another recording."
+                    "another EEG."
                 ),
             )
 
@@ -224,11 +288,13 @@ class MainWindow(QMainWindow):
                 )
             )
 
-            self.recording = recording
+            self.recording = (
+                recording
+            )
 
-            # ---------------------------------------------
-            # Reset old detection state
-            # ---------------------------------------------
+            # -------------------------------------------------
+            # Reset candidate state
+            # -------------------------------------------------
 
             self.viewer.set_artifact_candidates(
                 []
@@ -238,26 +304,44 @@ class MainWindow(QMainWindow):
                 []
             )
 
-            # ---------------------------------------------
-            # Load recording into viewer
-            # ---------------------------------------------
+            # -------------------------------------------------
+            # Processing defaults
+            # -------------------------------------------------
+
+            processing_settings = (
+                self.processing_panel.current_settings()
+            )
+
+            self.viewer.set_processing_settings(
+                processing_settings
+            )
+
+            self.processing_panel.set_applied(
+                processing_settings
+            )
+
+            # -------------------------------------------------
+            # Load recording
+            # -------------------------------------------------
 
             self.viewer.set_recording(
                 recording
             )
 
-            # ---------------------------------------------
+            # -------------------------------------------------
             # Metadata
-            # ---------------------------------------------
+            # -------------------------------------------------
 
             self.info_label.setText(
-                f"{recording.name}"
-                f"  •  "
-                f"{recording.channel_count} channels"
-                f"  •  "
-                f"{recording.sampling_frequency:.0f} Hz"
-                f"  •  "
-                f"{self._format_duration(recording.duration_seconds)}"
+                (
+                    f"{recording.name}"
+                    f"  •  "
+                    f"{recording.channel_count} channels"
+                    f"  •  "
+                    f"{recording.sampling_frequency:.0f} Hz"
+                    f"  •  "
+                    f"{self._format_duration(recording.duration_seconds)}"
+                )
             )
 
         except Exception as error:
@@ -268,12 +352,44 @@ class MainWindow(QMainWindow):
             )
 
     # =========================================================
-    # Detection
+    # Processing Preview
+    # =========================================================
+
+    def apply_processing_preview(
+        self,
+        settings: ProcessingSettings,
+    ):
+        if self.recording is None:
+            QMessageBox.warning(
+                self,
+                "No EEG loaded",
+                (
+                    "Open an EEG recording "
+                    "before applying preprocessing."
+                ),
+            )
+
+            return
+
+        try:
+            self.viewer.set_processing_settings(
+                settings
+            )
+
+        except Exception as error:
+            QMessageBox.critical(
+                self,
+                "Processing failed",
+                str(error),
+            )
+
+    # =========================================================
+    # Candidate Detection
     # =========================================================
 
     def run_detection(
         self,
-        amplitude_threshold: float,
+        thresholds: DetectionThresholds,
     ):
         if self.recording is None:
             QMessageBox.warning(
@@ -285,22 +401,11 @@ class MainWindow(QMainWindow):
             return
 
         if (
-            self.detection_worker is not None
+            self.detection_worker
+            is not None
             and self.detection_worker.isRunning()
         ):
             return
-
-        # -----------------------------------------------------
-        # Build user-configurable threshold model
-        # -----------------------------------------------------
-
-        thresholds = (
-            DetectionThresholds(
-                amplitude_uv=(
-                    amplitude_threshold
-                )
-            )
-        )
 
         # -----------------------------------------------------
         # Reset old results
@@ -314,10 +419,6 @@ class MainWindow(QMainWindow):
             []
         )
 
-        # -----------------------------------------------------
-        # UI state
-        # -----------------------------------------------------
-
         self.detection_panel.set_running(
             True
         )
@@ -327,7 +428,7 @@ class MainWindow(QMainWindow):
         )
 
         # -----------------------------------------------------
-        # Background Worker
+        # Background scan
         # -----------------------------------------------------
 
         self.detection_worker = (
@@ -356,40 +457,24 @@ class MainWindow(QMainWindow):
         self.detection_worker.start()
 
     # =========================================================
-    # Detection Results
+    # Detection results
     # =========================================================
 
     def _detection_completed(
         self,
         candidates: list,
     ):
-        # -----------------------------------------------------
-        # EEG overlays
-        # -----------------------------------------------------
-
         self.viewer.set_artifact_candidates(
             candidates
         )
-
-        # -----------------------------------------------------
-        # Review queue
-        # -----------------------------------------------------
 
         self.review_panel.set_candidates(
             candidates
         )
 
-        # -----------------------------------------------------
-        # Detection panel
-        # -----------------------------------------------------
-
         self.detection_panel.set_complete(
             len(candidates)
         )
-
-        # -----------------------------------------------------
-        # Select first candidate automatically
-        # -----------------------------------------------------
 
         if candidates:
             self.review_panel.list_widget.setCurrentRow(
@@ -416,6 +501,16 @@ class MainWindow(QMainWindow):
         self.open_button.setEnabled(
             True
         )
+
+    # =========================================================
+    # Review state
+    # =========================================================
+
+    def _candidate_updated(
+        self,
+        _candidate,
+    ):
+        self.viewer.render()
 
     # =========================================================
     # Helpers

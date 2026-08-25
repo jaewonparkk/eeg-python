@@ -2,33 +2,55 @@ from pydantic import BaseModel, Field
 
 
 class DetectionThresholds(BaseModel):
+    # =========================================================
+    # High amplitude
+    # =========================================================
+
+    amplitude_enabled: bool = True
+
     amplitude_uv: float = Field(
         default=150.0,
         gt=0,
-        description="Maximum absolute EEG amplitude in microvolts",
+        description=(
+            "Absolute EEG amplitude above which a segment "
+            "is flagged for human review."
+        ),
     )
 
-    gradient_uv: float = Field(
+    # =========================================================
+    # Rapid change
+    # =========================================================
+
+    rapid_change_enabled: bool = True
+
+    rapid_change_uv: float = Field(
         default=75.0,
         gt=0,
-        description="Maximum sample-to-sample voltage change in microvolts",
+        description=(
+            "Maximum permitted sample-to-sample "
+            "voltage change."
+        ),
     )
+
+    # =========================================================
+    # Flatline
+    # =========================================================
+
+    flatline_enabled: bool = True
 
     flatline_seconds: float = Field(
         default=2.0,
         gt=0,
-        description="Minimum flatline duration",
+        description=(
+            "Minimum duration of near-flat EEG activity."
+        ),
     )
 
     flatline_tolerance_uv: float = Field(
-        default=1.0,
+        default=2.0,
         gt=0,
-        description="Maximum voltage variation considered flat",
-    )
-
-    muscle_ratio: float = Field(
-        default=0.35,
-        ge=0,
-        le=1,
-        description="High-frequency power ratio threshold",
+        description=(
+            "Maximum peak-to-peak variation for a signal "
+            "to be considered near-flat."
+        ),
     )

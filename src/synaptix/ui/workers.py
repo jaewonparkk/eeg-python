@@ -1,6 +1,11 @@
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import (
+    QThread,
+    Signal,
+)
 
-from synaptix.core.recording import Recording
+from synaptix.core.recording import (
+    Recording,
+)
 from synaptix.detection.artifact_detector import (
     ArtifactDetector,
 )
@@ -10,9 +15,17 @@ from synaptix.models.thresholds import (
 
 
 class DetectionWorker(QThread):
-    progress_changed = Signal(int)
-    scan_completed = Signal(list)
-    scan_failed = Signal(str)
+    progress_changed = Signal(
+        int
+    )
+
+    scan_completed = Signal(
+        list
+    )
+
+    scan_failed = Signal(
+        str
+    )
 
     def __init__(
         self,
@@ -24,7 +37,9 @@ class DetectionWorker(QThread):
         self.recording = recording
         self.thresholds = thresholds
 
-    def run(self):
+    def run(
+        self,
+    ):
         try:
             detector = ArtifactDetector(
                 thresholds=self.thresholds
