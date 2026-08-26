@@ -9,15 +9,24 @@ from scipy.signal import (
     sosfiltfilt,
 )
 
-from synaptix.core.recording import Recording
-from synaptix.models.processing import ProcessingSettings
+from synaptix.core.recording import (
+    Recording,
+)
+from synaptix.models.pipeline import (
+    PipelineConfiguration,
+    PipelineStep,
+    StepType,
+)
 
 
-@dataclass(slots=True)
+@dataclass(
+    slots=True,
+)
 class ProcessingWindow:
     times: np.ndarray
 
     raw_data: np.ndarray
+
     processed_data: np.ndarray
 
     channels: list[str]
@@ -25,23 +34,24 @@ class ProcessingWindow:
 
 class EEGProcessingPipeline:
     """
-    Non-destructive EEG preprocessing preview engine.
+    Non-destructive preview engine.
 
-    The pipeline never modifies the original Recording.
+    Pipeline steps execute in the exact order
+    configured by the user.
 
-    Only the currently requested time window plus a small
-    padding region is loaded and processed. This preserves
-    Synaptix's lazy-loading architecture.
+    The original Recording is never modified.
     """
 
     def __init__(
         self,
-        settings: ProcessingSettings,
+        configuration: PipelineConfiguration,
     ):
-        self.settings = settings
+        self.configuration = (
+            configuration
+        )
 
     # =========================================================
-    # Public API
+    # Process window
     # =========================================================
 
     def process_window(
@@ -52,26 +62,7 @@ class EEGProcessingPipeline:
         channels: list[str],
     ) -> ProcessingWindow:
         if not channels:
-            return ProcessingWindow(
-                times=np.array([]),
-                raw_data=np.empty(
-                    (
-                        0,
-                        0,
-                    )
-                ),
-                processed_data=np.empty(
-                    (
-                        0,
-                        0,
-                    )
-                ),
-                channels=[],
-            )
-
-        self._validate_settings(
-            recording
-        )
+            return self._empty_result()
 
         requested_start = max(
             0.0,
@@ -80,12 +71,15 @@ class EEGProcessingPipeline:
 
         requested_end = min(
             recording.duration_seconds,
-            requested_start
-            + duration_seconds,
+            (
+                requested_start
+                + duration_seconds
+            ),
         )
 
         padding = (
-            self.settings.preview_padding_seconds
+            self.configuration
+            .preview_padding_seconds
         )
 
         context_start = max(
@@ -106,38 +100,47 @@ class EEGProcessingPipeline:
         )
 
         # -----------------------------------------------------
-        # Load only the required EEG window.
+        # Average reference needs access to all EEG channels,
+        # not only the channels currently visible.
         # -----------------------------------------------------
+
+        average_reference_enabled = any(
+            (
+                step.enabled
+                and step.step_type
+                == StepType.AVERAGE_REFERENCE
+            )
+            for step
+            in self.configuration.steps
+        )
+
+        if average_reference_enabled:
+            processing_channels = list(
+                dict.fromkeys(
+                    recording.eeg_channels
+                    + channels
+                )
+            )
+
+        else:
+            processing_channels = list(
+                channels
+            )
 
         raw_context, context_times = (
             recording.get_window(
                 start_seconds=context_start,
-                duration_seconds=context_duration,
-                channels=channels,
+                duration_seconds=(
+                    context_duration
+                ),
+                channels=(
+                    processing_channels
+                ),
             )
         )
 
         if raw_context.size == 0:
-            return ProcessingWindow(
-                times=np.array([]),
-                raw_data=np.empty(
-                    (
-                        len(channels),
-                        0,
-                    )
-                ),
-                processed_data=np.empty(
-                    (
-                        len(channels),
-                        0,
-                    )
-                ),
-                channels=channels,
-            )
-
-        # -----------------------------------------------------
-        # Non-destructive copy.
-        # -----------------------------------------------------
+            return self._empty_result()
 
         processed_context = np.array(
             raw_context,
@@ -145,36 +148,37 @@ class EEGProcessingPipeline:
             copy=True,
         )
 
-        # -----------------------------------------------------
-        # Processing
-        # -----------------------------------------------------
+        # =====================================================
+        # Execute configured pipeline IN ORDER
+        # =====================================================
 
-        if self.settings.bandpass_enabled:
+        for step in (
+            self.configuration.steps
+        ):
+            if not step.enabled:
+                continue
+
             processed_context = (
-                self._apply_bandpass(
+                self._execute_step(
+                    step=step,
                     data=processed_context,
-                    sampling_frequency=(
-                        recording.sampling_frequency
+                    channel_names=(
+                        processing_channels
                     ),
+                    recording=recording,
                 )
             )
 
-        if self.settings.notch_enabled:
-            processed_context = (
-                self._apply_notch(
-                    data=processed_context,
-                    sampling_frequency=(
-                        recording.sampling_frequency
-                    ),
-                )
-            )
+        # =====================================================
+        # Return only visible channels
+        # =====================================================
 
-        # -----------------------------------------------------
-        # Remove padding after filtering.
-        #
-        # Padding reduces edge artifacts caused by filtering
-        # directly at the visible window boundaries.
-        # -----------------------------------------------------
+        display_indices = [
+            processing_channels.index(
+                channel
+            )
+            for channel in channels
+        ]
 
         mask = (
             (context_times >= requested_start)
@@ -184,21 +188,27 @@ class EEGProcessingPipeline:
             )
         )
 
-        times = context_times[
-            mask
-        ]
-
         raw_visible = raw_context[
+            display_indices,
+            :
+        ][
             :,
             mask,
         ]
 
         processed_visible = (
             processed_context[
+                display_indices,
+                :
+            ][
                 :,
                 mask,
             ]
         )
+
+        times = context_times[
+            mask
+        ]
 
         return ProcessingWindow(
             times=times,
@@ -210,32 +220,117 @@ class EEGProcessingPipeline:
         )
 
     # =========================================================
+    # Execute step
+    # =========================================================
+
+    def _execute_step(
+        self,
+        step: PipelineStep,
+        data: np.ndarray,
+        channel_names: list[str],
+        recording: Recording,
+    ) -> np.ndarray:
+        if (
+            step.step_type
+            == StepType.BANDPASS
+        ):
+            return self._bandpass(
+                data=data,
+                step=step,
+                sampling_frequency=(
+                    recording.sampling_frequency
+                ),
+            )
+
+        if (
+            step.step_type
+            == StepType.NOTCH
+        ):
+            return self._notch(
+                data=data,
+                step=step,
+                sampling_frequency=(
+                    recording.sampling_frequency
+                ),
+            )
+
+        if (
+            step.step_type
+            == StepType.AVERAGE_REFERENCE
+        ):
+            return self._average_reference(
+                data=data,
+                step=step,
+                channel_names=(
+                    channel_names
+                ),
+                recording=recording,
+            )
+
+        return data
+
+    # =========================================================
     # Band-pass
     # =========================================================
 
-    def _apply_bandpass(
-        self,
+    @staticmethod
+    def _bandpass(
         data: np.ndarray,
+        step: PipelineStep,
         sampling_frequency: float,
     ) -> np.ndarray:
-        low = (
-            self.settings.highpass_hz
+        highpass = float(
+            step.parameters.get(
+                "highpass_hz",
+                0.5,
+            )
         )
 
-        high = (
-            self.settings.lowpass_hz
+        lowpass = float(
+            step.parameters.get(
+                "lowpass_hz",
+                45.0,
+            )
         )
 
-        order = (
-            self.settings.filter_order
+        order = int(
+            step.parameters.get(
+                "order",
+                4,
+            )
         )
 
-        # scipy butter with fs= accepts Hz directly.
+        nyquist = (
+            sampling_frequency
+            / 2.0
+        )
+
+        if highpass <= 0:
+            raise ValueError(
+                "High-pass must be "
+                "greater than 0 Hz."
+            )
+
+        if lowpass <= highpass:
+            raise ValueError(
+                "Low-pass must be greater "
+                "than high-pass."
+            )
+
+        if lowpass >= nyquist:
+            raise ValueError(
+                (
+                    "Low-pass must remain "
+                    "below Nyquist frequency "
+                    f"({nyquist:.1f} Hz)."
+                )
+            )
+
         sos = butter(
             N=order,
             Wn=[
-                low,
-                high,
+                highpass,
+                lowpass,
             ],
             btype="bandpass",
             fs=sampling_frequency,
@@ -252,18 +347,40 @@ class EEGProcessingPipeline:
     # Notch
     # =========================================================
 
-    def _apply_notch(
-        self,
+    @staticmethod
+    def _notch(
         data: np.ndarray,
+        step: PipelineStep,
         sampling_frequency: float,
     ) -> np.ndarray:
-        frequency = (
-            self.settings.notch_hz
+        frequency = float(
+            step.parameters.get(
+                "frequency_hz",
+                60.0,
+            )
         )
 
-        quality_factor = (
-            self.settings.notch_q
+        quality_factor = float(
+            step.parameters.get(
+                "quality_factor",
+                30.0,
+            )
         )
+
+        nyquist = (
+            sampling_frequency
+            / 2.0
+        )
+
+        if frequency >= nyquist:
+            raise ValueError(
+                (
+                    "Notch frequency must "
+                    "remain below Nyquist "
+                    f"frequency "
+                    f"({nyquist:.1f} Hz)."
+                )
+            )
 
         b, a = iirnotch(
             w0=frequency,
@@ -279,62 +396,103 @@ class EEGProcessingPipeline:
         )
 
     # =========================================================
-    # Validation
+    # Average reference
     # =========================================================
 
-    def _validate_settings(
-        self,
+    @staticmethod
+    def _average_reference(
+        data: np.ndarray,
+        step: PipelineStep,
+        channel_names: list[str],
         recording: Recording,
-    ):
-        sampling_frequency = (
-            recording.sampling_frequency
+    ) -> np.ndarray:
+        excluded = set(
+            step.parameters.get(
+                "exclude_channels",
+                [],
+            )
         )
 
-        nyquist = (
-            sampling_frequency / 2.0
+        eeg_indices = [
+            index
+            for index, channel
+            in enumerate(
+                channel_names
+            )
+            if channel
+            in recording.eeg_channels
+        ]
+
+        reference_indices = [
+            index
+            for index
+            in eeg_indices
+            if channel_names[index]
+            not in excluded
+        ]
+
+        if len(reference_indices) < 2:
+            raise ValueError(
+                (
+                    "Average reference needs "
+                    "at least two eligible "
+                    "EEG channels."
+                )
+            )
+
+        reference_signal = np.mean(
+            data[
+                reference_indices,
+                :
+            ],
+            axis=0,
         )
 
-        if self.settings.bandpass_enabled:
-            low = (
-                self.settings.highpass_hz
-            )
+        output = np.array(
+            data,
+            copy=True,
+        )
 
-            high = (
-                self.settings.lowpass_hz
-            )
+        output[
+            eeg_indices,
+            :
+        ] = (
+            output[
+                eeg_indices,
+                :
+            ]
+            - reference_signal
+        )
 
-            if low <= 0:
-                raise ValueError(
-                    "High-pass frequency must "
-                    "be greater than 0 Hz."
+        return output
+
+    # =========================================================
+    # Empty
+    # =========================================================
+
+    @staticmethod
+    def _empty_result(
+        channels: list[str] | None = None,
+    ) -> ProcessingWindow:
+        channels = (
+            channels
+            if channels is not None
+            else []
+        )
+
+        return ProcessingWindow(
+            times=np.array([]),
+            raw_data=np.empty(
+                (
+                    len(channels),
+                    0,
                 )
-
-            if high <= low:
-                raise ValueError(
-                    "Low-pass frequency must "
-                    "be greater than the "
-                    "high-pass frequency."
+            ),
+            processed_data=np.empty(
+                (
+                    len(channels),
+                    0,
                 )
-
-            if high >= nyquist:
-                raise ValueError(
-                    (
-                        "Low-pass frequency must be "
-                        f"below Nyquist frequency "
-                        f"({nyquist:.1f} Hz)."
-                    )
-                )
-
-        if self.settings.notch_enabled:
-            notch = (
-                self.settings.notch_hz
-            )
-
-            if notch >= nyquist:
-                raise ValueError(
-                    (
-                        "Notch frequency must be "
-                        f"below Nyquist frequency "
-                        f"({nyquist:.1f} Hz)."
-                    )
-                )
+            ),
+            channels=channels,
+        )

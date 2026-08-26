@@ -1,4 +1,6 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import (
+    Qt,
+)
 
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -16,11 +18,14 @@ from PySide6.QtWidgets import (
 from synaptix.core.recording import (
     Recording,
 )
-from synaptix.models.processing import (
-    ProcessingSettings,
+from synaptix.models.pipeline import (
+    PipelineConfiguration,
 )
 from synaptix.models.thresholds import (
     DetectionThresholds,
+)
+from synaptix.processing.script_generator import (
+    generate_pipeline_script,
 )
 from synaptix.ui.detection_panel import (
     DetectionPanel,
@@ -28,11 +33,17 @@ from synaptix.ui.detection_panel import (
 from synaptix.ui.eeg_viewer import (
     EEGViewer,
 )
-from synaptix.ui.processing_panel import (
-    ProcessingPanel,
+from synaptix.ui.pipeline_panel import (
+    PipelinePanel,
 )
 from synaptix.ui.review_panel import (
     ReviewPanel,
+)
+from synaptix.ui.script_preview import (
+    ScriptPreviewPanel,
+)
+from synaptix.ui.step_inspector import (
+    StepInspector,
 )
 from synaptix.ui.workers import (
     DetectionWorker,
@@ -57,6 +68,10 @@ class MainWindow(QMainWindow):
             DetectionWorker | None
         ) = None
 
+        self.pipeline_config = (
+            PipelineConfiguration.default()
+        )
+
         # =====================================================
         # Window
         # =====================================================
@@ -66,12 +81,12 @@ class MainWindow(QMainWindow):
         )
 
         self.resize(
-            1600,
-            1000,
+            1700,
+            1050,
         )
 
         # =====================================================
-        # Top bar
+        # Top
         # =====================================================
 
         self.open_button = QPushButton(
@@ -86,10 +101,6 @@ class MainWindow(QMainWindow):
             "Open an EEG recording to begin."
         )
 
-        self.info_label.setStyleSheet(
-            "font-weight: 500;"
-        )
-
         top_layout = QHBoxLayout()
 
         top_layout.addWidget(
@@ -102,15 +113,23 @@ class MainWindow(QMainWindow):
         )
 
         # =====================================================
-        # Left panels
+        # Pipeline
+        # =====================================================
+
+        self.pipeline_panel = (
+            PipelinePanel(
+                pipeline=(
+                    self.pipeline_config
+                )
+            )
+        )
+
+        # =====================================================
+        # Detection
         # =====================================================
 
         self.detection_panel = (
             DetectionPanel()
-        )
-
-        self.processing_panel = (
-            ProcessingPanel()
         )
 
         self.left_tabs = (
@@ -118,47 +137,153 @@ class MainWindow(QMainWindow):
         )
 
         self.left_tabs.addTab(
+            self.pipeline_panel,
+            "Pipeline",
+        )
+
+        self.left_tabs.addTab(
             self.detection_panel,
             "Detection",
         )
 
-        self.left_tabs.addTab(
-            self.processing_panel,
-            "Processing",
-        )
-
         self.left_tabs.setMinimumWidth(
-            270
+            280
         )
 
-        self.left_tabs.setMaximumWidth(
+        # =====================================================
+        # Center viewer
+        # =====================================================
+
+        self.viewer = (
+            EEGViewer()
+        )
+
+        self.viewer.set_pipeline_config(
+            self.pipeline_config
+        )
+
+        # =====================================================
+        # Right side
+        # =====================================================
+
+        self.step_inspector = (
+            StepInspector()
+        )
+
+        self.review_panel = (
+            ReviewPanel()
+        )
+
+        self.right_tabs = (
+            QTabWidget()
+        )
+
+        self.right_tabs.addTab(
+            self.step_inspector,
+            "Step Details",
+        )
+
+        self.right_tabs.addTab(
+            self.review_panel,
+            "Review Queue",
+        )
+
+        self.right_tabs.setMinimumWidth(
             330
         )
 
         # =====================================================
-        # Viewer
+        # Main horizontal workspace
         # =====================================================
 
-        self.viewer = EEGViewer()
+        self.horizontal_splitter = (
+            QSplitter(
+                Qt.Orientation.Horizontal
+            )
+        )
+
+        self.horizontal_splitter.addWidget(
+            self.left_tabs
+        )
+
+        self.horizontal_splitter.addWidget(
+            self.viewer
+        )
+
+        self.horizontal_splitter.addWidget(
+            self.right_tabs
+        )
+
+        self.horizontal_splitter.setStretchFactor(
+            0,
+            0,
+        )
+
+        self.horizontal_splitter.setStretchFactor(
+            1,
+            1,
+        )
+
+        self.horizontal_splitter.setStretchFactor(
+            2,
+            0,
+        )
+
+        self.horizontal_splitter.setSizes(
+            [
+                290,
+                1050,
+                350,
+            ]
+        )
 
         # =====================================================
-        # Review
+        # Script
         # =====================================================
 
-        self.review_panel = (
-            ReviewPanel()
+        self.script_preview = (
+            ScriptPreviewPanel()
+        )
+
+        self.vertical_splitter = (
+            QSplitter(
+                Qt.Orientation.Vertical
+            )
+        )
+
+        self.vertical_splitter.addWidget(
+            self.horizontal_splitter
+        )
+
+        self.vertical_splitter.addWidget(
+            self.script_preview
+        )
+
+        self.vertical_splitter.setSizes(
+            [
+                780,
+                250,
+            ]
         )
 
         # =====================================================
         # Signals
         # =====================================================
 
-        self.detection_panel.run_requested.connect(
-            self.run_detection
+        self.pipeline_panel.pipeline_changed.connect(
+            self._pipeline_changed
         )
 
-        self.processing_panel.apply_requested.connect(
-            self.apply_processing_preview
+        self.pipeline_panel.step_selected.connect(
+            self._step_selected
+        )
+
+        self.step_inspector.step_changed.connect(
+            self._step_settings_changed
+        )
+
+        self.detection_panel.run_requested.connect(
+            self.run_detection
         )
 
         self.review_panel.candidate_selected.connect(
@@ -167,49 +292,6 @@ class MainWindow(QMainWindow):
 
         self.review_panel.candidate_updated.connect(
             self._candidate_updated
-        )
-
-        # =====================================================
-        # Main workspace
-        # =====================================================
-
-        self.splitter = QSplitter(
-            Qt.Orientation.Horizontal
-        )
-
-        self.splitter.addWidget(
-            self.left_tabs
-        )
-
-        self.splitter.addWidget(
-            self.viewer
-        )
-
-        self.splitter.addWidget(
-            self.review_panel
-        )
-
-        self.splitter.setStretchFactor(
-            0,
-            0,
-        )
-
-        self.splitter.setStretchFactor(
-            1,
-            1,
-        )
-
-        self.splitter.setStretchFactor(
-            2,
-            0,
-        )
-
-        self.splitter.setSizes(
-            [
-                300,
-                980,
-                320,
-            ]
         )
 
         # =====================================================
@@ -223,7 +305,7 @@ class MainWindow(QMainWindow):
         )
 
         root_layout.addWidget(
-            self.splitter,
+            self.vertical_splitter,
             stretch=1,
         )
 
@@ -236,6 +318,23 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(
             container
         )
+
+        # =====================================================
+        # Initial state
+        # =====================================================
+
+        self._update_script()
+
+        if self.pipeline_config.steps:
+            self.step_inspector.set_step(
+                step=(
+                    self.pipeline_config.steps[0]
+                ),
+                pipeline=(
+                    self.pipeline_config
+                ),
+                recording=None,
+            )
 
     # =========================================================
     # Open EEG
@@ -253,9 +352,8 @@ class MainWindow(QMainWindow):
                 self,
                 "Detection in progress",
                 (
-                    "Wait for the current candidate "
-                    "scan to finish before opening "
-                    "another EEG."
+                    "Wait for the current "
+                    "candidate scan to finish."
                 ),
             )
 
@@ -269,10 +367,6 @@ class MainWindow(QMainWindow):
                 (
                     "EEG Files "
                     "(*.edf *.bdf *.fif *.set);;"
-                    "EEGLAB Files (*.set);;"
-                    "EDF Files (*.edf);;"
-                    "BDF Files (*.bdf);;"
-                    "FIF Files (*.fif);;"
                     "All Files (*)"
                 ),
             )
@@ -288,61 +382,54 @@ class MainWindow(QMainWindow):
                 )
             )
 
-            self.recording = (
+            self.recording = recording
+
+            self.viewer.set_recording(
                 recording
             )
 
-            # -------------------------------------------------
-            # Reset candidate state
-            # -------------------------------------------------
-
             self.viewer.set_artifact_candidates(
                 []
+            )
+
+            self.viewer.set_pipeline_config(
+                self.pipeline_config
             )
 
             self.review_panel.set_candidates(
                 []
             )
 
-            # -------------------------------------------------
-            # Processing defaults
-            # -------------------------------------------------
-
-            processing_settings = (
-                self.processing_panel.current_settings()
-            )
-
-            self.viewer.set_processing_settings(
-                processing_settings
-            )
-
-            self.processing_panel.set_applied(
-                processing_settings
-            )
-
-            # -------------------------------------------------
-            # Load recording
-            # -------------------------------------------------
-
-            self.viewer.set_recording(
-                recording
-            )
-
-            # -------------------------------------------------
-            # Metadata
-            # -------------------------------------------------
-
             self.info_label.setText(
                 (
                     f"{recording.name}"
-                    f"  •  "
-                    f"{recording.channel_count} channels"
-                    f"  •  "
+                    "  •  "
+                    f"{recording.eeg_channel_count} "
+                    "EEG channels"
+                    "  •  "
                     f"{recording.sampling_frequency:.0f} Hz"
-                    f"  •  "
+                    "  •  "
                     f"{self._format_duration(recording.duration_seconds)}"
                 )
             )
+
+            current_step = (
+                self.pipeline_panel
+                .current_step()
+            )
+
+            if current_step is not None:
+                self.step_inspector.set_step(
+                    step=current_step,
+                    pipeline=(
+                        self.pipeline_config
+                    ),
+                    recording=(
+                        self.recording
+                    ),
+                )
+
+            self._update_script()
 
         except Exception as error:
             QMessageBox.critical(
@@ -352,39 +439,110 @@ class MainWindow(QMainWindow):
             )
 
     # =========================================================
-    # Processing Preview
+    # Pipeline
     # =========================================================
 
-    def apply_processing_preview(
+    def _pipeline_changed(
         self,
-        settings: ProcessingSettings,
+        pipeline: PipelineConfiguration,
     ):
-        if self.recording is None:
-            QMessageBox.warning(
-                self,
-                "No EEG loaded",
-                (
-                    "Open an EEG recording "
-                    "before applying preprocessing."
+        self.pipeline_config = (
+            pipeline
+        )
+
+        self.viewer.set_pipeline_config(
+            pipeline
+        )
+
+        current_step = (
+            self.pipeline_panel
+            .current_step()
+        )
+
+        if current_step is not None:
+            self.step_inspector.set_step(
+                step=current_step,
+                pipeline=pipeline,
+                recording=(
+                    self.recording
                 ),
             )
 
-            return
+        self._update_script()
 
-        try:
-            self.viewer.set_processing_settings(
-                settings
-            )
+    def _step_selected(
+        self,
+        step,
+    ):
+        self.step_inspector.set_step(
+            step=step,
+            pipeline=(
+                self.pipeline_config
+            ),
+            recording=(
+                self.recording
+            ),
+        )
 
-        except Exception as error:
-            QMessageBox.critical(
-                self,
-                "Processing failed",
-                str(error),
+        self.right_tabs.setCurrentWidget(
+            self.step_inspector
+        )
+
+    def _step_settings_changed(
+        self,
+        step,
+    ):
+        self.pipeline_panel.refresh(
+            selected_step_id=(
+                step.step_id
             )
+        )
+
+        self.viewer.set_pipeline_config(
+            self.pipeline_config
+        )
+
+        self._update_script()
+
+        self.step_inspector.set_step(
+            step=step,
+            pipeline=(
+                self.pipeline_config
+            ),
+            recording=(
+                self.recording
+            ),
+        )
 
     # =========================================================
-    # Candidate Detection
+    # Script
+    # =========================================================
+
+    def _update_script(
+        self,
+    ):
+        path = (
+            self.recording.source_path
+            if self.recording
+            is not None
+            else None
+        )
+
+        script = (
+            generate_pipeline_script(
+                pipeline=(
+                    self.pipeline_config
+                ),
+                input_path=path,
+            )
+        )
+
+        self.script_preview.set_script(
+            script
+        )
+
+    # =========================================================
+    # Detection
     # =========================================================
 
     def run_detection(
@@ -407,10 +565,6 @@ class MainWindow(QMainWindow):
         ):
             return
 
-        # -----------------------------------------------------
-        # Reset old results
-        # -----------------------------------------------------
-
         self.viewer.set_artifact_candidates(
             []
         )
@@ -426,10 +580,6 @@ class MainWindow(QMainWindow):
         self.open_button.setEnabled(
             False
         )
-
-        # -----------------------------------------------------
-        # Background scan
-        # -----------------------------------------------------
 
         self.detection_worker = (
             DetectionWorker(
@@ -456,10 +606,6 @@ class MainWindow(QMainWindow):
 
         self.detection_worker.start()
 
-    # =========================================================
-    # Detection results
-    # =========================================================
-
     def _detection_completed(
         self,
         candidates: list,
@@ -474,6 +620,10 @@ class MainWindow(QMainWindow):
 
         self.detection_panel.set_complete(
             len(candidates)
+        )
+
+        self.right_tabs.setCurrentWidget(
+            self.review_panel
         )
 
         if candidates:
@@ -501,10 +651,6 @@ class MainWindow(QMainWindow):
         self.open_button.setEnabled(
             True
         )
-
-    # =========================================================
-    # Review state
-    # =========================================================
 
     def _candidate_updated(
         self,
@@ -535,18 +681,18 @@ class MainWindow(QMainWindow):
             seconds % 3600
         ) // 60
 
-        remaining_seconds = (
+        remaining = (
             seconds % 60
         )
 
-        if hours > 0:
+        if hours:
             return (
                 f"{hours}h "
                 f"{minutes:02d}m "
-                f"{remaining_seconds:02d}s"
+                f"{remaining:02d}s"
             )
 
         return (
             f"{minutes}m "
-            f"{remaining_seconds:02d}s"
+            f"{remaining:02d}s"
         )
