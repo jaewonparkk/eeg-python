@@ -27,6 +27,9 @@ from synaptix.models.thresholds import (
 from synaptix.processing.script_generator import (
     generate_pipeline_script,
 )
+from synaptix.processing.script_parser import (
+    parse_pipeline_script,
+)
 from synaptix.ui.detection_panel import (
     DetectionPanel,
 )
@@ -86,7 +89,7 @@ class MainWindow(QMainWindow):
         )
 
         # =====================================================
-        # Top
+        # Top bar
         # =====================================================
 
         self.open_button = QPushButton(
@@ -113,7 +116,7 @@ class MainWindow(QMainWindow):
         )
 
         # =====================================================
-        # Pipeline
+        # Left side
         # =====================================================
 
         self.pipeline_panel = (
@@ -124,17 +127,11 @@ class MainWindow(QMainWindow):
             )
         )
 
-        # =====================================================
-        # Detection
-        # =====================================================
-
         self.detection_panel = (
             DetectionPanel()
         )
 
-        self.left_tabs = (
-            QTabWidget()
-        )
+        self.left_tabs = QTabWidget()
 
         self.left_tabs.addTab(
             self.pipeline_panel,
@@ -151,12 +148,10 @@ class MainWindow(QMainWindow):
         )
 
         # =====================================================
-        # Center viewer
+        # EEG viewer
         # =====================================================
 
-        self.viewer = (
-            EEGViewer()
-        )
+        self.viewer = EEGViewer()
 
         self.viewer.set_pipeline_config(
             self.pipeline_config
@@ -174,9 +169,7 @@ class MainWindow(QMainWindow):
             ReviewPanel()
         )
 
-        self.right_tabs = (
-            QTabWidget()
-        )
+        self.right_tabs = QTabWidget()
 
         self.right_tabs.addTab(
             self.step_inspector,
@@ -193,7 +186,7 @@ class MainWindow(QMainWindow):
         )
 
         # =====================================================
-        # Main horizontal workspace
+        # Horizontal workspace
         # =====================================================
 
         self.horizontal_splitter = (
@@ -238,7 +231,7 @@ class MainWindow(QMainWindow):
         )
 
         # =====================================================
-        # Script
+        # Script editor
         # =====================================================
 
         self.script_preview = (
@@ -259,10 +252,20 @@ class MainWindow(QMainWindow):
             self.script_preview
         )
 
+        self.vertical_splitter.setStretchFactor(
+            0,
+            1,
+        )
+
+        self.vertical_splitter.setStretchFactor(
+            1,
+            0,
+        )
+
         self.vertical_splitter.setSizes(
             [
-                780,
-                250,
+                700,
+                330,
             ]
         )
 
@@ -280,6 +283,14 @@ class MainWindow(QMainWindow):
 
         self.step_inspector.step_changed.connect(
             self._step_settings_changed
+        )
+
+        self.script_preview.apply_requested.connect(
+            self._apply_script_to_pipeline
+        )
+
+        self.script_preview.regenerate_requested.connect(
+            self._regenerate_script
         )
 
         self.detection_panel.run_requested.connect(
@@ -328,7 +339,9 @@ class MainWindow(QMainWindow):
         if self.pipeline_config.steps:
             self.step_inspector.set_step(
                 step=(
-                    self.pipeline_config.steps[0]
+                    self.pipeline_config.steps[
+                        0
+                    ]
                 ),
                 pipeline=(
                     self.pipeline_config
@@ -414,8 +427,7 @@ class MainWindow(QMainWindow):
             )
 
             current_step = (
-                self.pipeline_panel
-                .current_step()
+                self.pipeline_panel.current_step()
             )
 
             if current_step is not None:
@@ -431,6 +443,13 @@ class MainWindow(QMainWindow):
 
             self._update_script()
 
+            self.script_preview.set_status(
+                (
+                    "EEG loaded. Script regenerated "
+                    "from the current pipeline."
+                )
+            )
+
         except Exception as error:
             QMessageBox.critical(
                 self,
@@ -439,24 +458,21 @@ class MainWindow(QMainWindow):
             )
 
     # =========================================================
-    # Pipeline
+    # Pipeline changed through UI
     # =========================================================
 
     def _pipeline_changed(
         self,
         pipeline: PipelineConfiguration,
     ):
-        self.pipeline_config = (
-            pipeline
-        )
+        self.pipeline_config = pipeline
 
         self.viewer.set_pipeline_config(
             pipeline
         )
 
         current_step = (
-            self.pipeline_panel
-            .current_step()
+            self.pipeline_panel.current_step()
         )
 
         if current_step is not None:
@@ -469,6 +485,17 @@ class MainWindow(QMainWindow):
             )
 
         self._update_script()
+
+        self.script_preview.set_status(
+            (
+                "Script updated from "
+                "pipeline changes."
+            )
+        )
+
+    # =========================================================
+    # Step selected
+    # =========================================================
 
     def _step_selected(
         self,
@@ -487,6 +514,10 @@ class MainWindow(QMainWindow):
         self.right_tabs.setCurrentWidget(
             self.step_inspector
         )
+
+    # =========================================================
+    # Step settings changed
+    # =========================================================
 
     def _step_settings_changed(
         self,
@@ -514,17 +545,109 @@ class MainWindow(QMainWindow):
             ),
         )
 
+        self.script_preview.set_status(
+            (
+                "Script updated from "
+                "step settings."
+            )
+        )
+
     # =========================================================
-    # Script
+    # Script -> Pipeline
     # =========================================================
+
+    def _apply_script_to_pipeline(
+        self,
+        script: str,
+    ):
+        try:
+            parsed_pipeline = (
+                parse_pipeline_script(
+                    script=script,
+                    current_pipeline=(
+                        self.pipeline_config
+                    ),
+                )
+            )
+
+        except ValueError as error:
+            self.script_preview.set_status(
+                (
+                    "Script configuration error:\n"
+                    f"{error}"
+                )
+            )
+
+            return
+
+        self.pipeline_config = (
+            parsed_pipeline
+        )
+
+        # -----------------------------------------------------
+        # Update pipeline UI
+        # -----------------------------------------------------
+
+        self.pipeline_panel.set_pipeline(
+            parsed_pipeline
+        )
+
+        # -----------------------------------------------------
+        # Update processed EEG
+        # -----------------------------------------------------
+
+        self.viewer.set_pipeline_config(
+            parsed_pipeline
+        )
+
+        # -----------------------------------------------------
+        # Update inspector
+        # -----------------------------------------------------
+
+        current_step = (
+            self.pipeline_panel.current_step()
+        )
+
+        if current_step is not None:
+            self.step_inspector.set_step(
+                step=current_step,
+                pipeline=(
+                    parsed_pipeline
+                ),
+                recording=(
+                    self.recording
+                ),
+            )
+
+        self.script_preview.set_status(
+            (
+                "✓ Script settings applied to pipeline. "
+                "Processed preview updated."
+            )
+        )
+
+    # =========================================================
+    # Pipeline -> Script
+    # =========================================================
+
+    def _regenerate_script(
+        self,
+    ):
+        self._update_script()
+
+        self.script_preview.set_status(
+            (
+                "✓ Script regenerated from "
+                "the current pipeline."
+            )
+        )
 
     def _update_script(
         self,
     ):
         path = (
             self.recording.source_path
-            if self.recording
-            is not None
+            if self.recording is not None
             else None
         )
 
@@ -553,7 +676,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "No EEG loaded",
-                "Open an EEG recording first.",
+                (
+                    "Open an EEG recording "
+                    "first."
+                ),
             )
 
             return
@@ -652,6 +778,10 @@ class MainWindow(QMainWindow):
             True
         )
 
+    # =========================================================
+    # Candidate
+    # =========================================================
+
     def _candidate_updated(
         self,
         _candidate,
@@ -659,7 +789,7 @@ class MainWindow(QMainWindow):
         self.viewer.render()
 
     # =========================================================
-    # Helpers
+    # Helper
     # =========================================================
 
     @staticmethod

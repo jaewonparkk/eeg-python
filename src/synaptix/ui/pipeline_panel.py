@@ -4,11 +4,11 @@ from PySide6.QtCore import (
 )
 
 from PySide6.QtWidgets import (
+    QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QPushButton,
-    QHBoxLayout,
     QVBoxLayout,
     QWidget,
 )
@@ -63,9 +63,9 @@ class PipelinePanel(QWidget):
 
         subtitle = QLabel(
             (
-                "Steps execute from top to "
-                "bottom. Reordering changes "
-                "the preprocessing result."
+                "Steps execute from top to bottom. "
+                "Changing their order changes the "
+                "processing result."
             )
         )
 
@@ -90,7 +90,7 @@ class PipelinePanel(QWidget):
         )
 
         # =====================================================
-        # Move buttons
+        # Move controls
         # =====================================================
 
         self.up_button = QPushButton(
@@ -109,9 +109,7 @@ class PipelinePanel(QWidget):
             self._move_down
         )
 
-        button_layout = (
-            QHBoxLayout()
-        )
+        button_layout = QHBoxLayout()
 
         button_layout.addWidget(
             self.up_button
@@ -153,6 +151,23 @@ class PipelinePanel(QWidget):
         self.refresh()
 
     # =========================================================
+    # Replace pipeline
+    # =========================================================
+
+    def set_pipeline(
+        self,
+        pipeline: PipelineConfiguration,
+        selected_step_id: str | None = None,
+    ):
+        self.pipeline = pipeline
+
+        self.refresh(
+            selected_step_id=(
+                selected_step_id
+            )
+        )
+
+    # =========================================================
     # Refresh
     # =========================================================
 
@@ -160,7 +175,10 @@ class PipelinePanel(QWidget):
         self,
         selected_step_id: str | None = None,
     ):
-        if selected_step_id is None:
+        if (
+            selected_step_id
+            is None
+        ):
             current = (
                 self.current_step()
             )
@@ -181,10 +199,8 @@ class PipelinePanel(QWidget):
         for index, step in enumerate(
             self.pipeline.steps
         ):
-            definition = (
-                definition_for(
-                    step.step_type
-                )
+            definition = definition_for(
+                step.step_type
             )
 
             item = QListWidgetItem(
@@ -199,13 +215,15 @@ class PipelinePanel(QWidget):
                 | Qt.ItemFlag.ItemIsUserCheckable
             )
 
-            item.setCheckState(
-                (
+            if step.enabled:
+                item.setCheckState(
                     Qt.CheckState.Checked
-                    if step.enabled
-                    else Qt.CheckState.Unchecked
                 )
-            )
+
+            else:
+                item.setCheckState(
+                    Qt.CheckState.Unchecked
+                )
 
             item.setData(
                 Qt.ItemDataRole.UserRole,
@@ -222,17 +240,19 @@ class PipelinePanel(QWidget):
             ):
                 selected_row = index
 
-        self.list_widget.setCurrentRow(
-            selected_row
-        )
+        if self.pipeline.steps:
+            self.list_widget.setCurrentRow(
+                selected_row
+            )
 
         self.list_widget.blockSignals(
             False
         )
 
-        self._selection_changed(
-            selected_row
-        )
+        if self.pipeline.steps:
+            self._selection_changed(
+                selected_row
+            )
 
     # =========================================================
     # Current step
@@ -312,7 +332,7 @@ class PipelinePanel(QWidget):
         )
 
     # =========================================================
-    # Move
+    # Move up
     # =========================================================
 
     def _move_up(
@@ -345,6 +365,10 @@ class PipelinePanel(QWidget):
         self.pipeline_changed.emit(
             self.pipeline
         )
+
+    # =========================================================
+    # Move down
+    # =========================================================
 
     def _move_down(
         self,
