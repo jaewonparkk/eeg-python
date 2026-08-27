@@ -19,19 +19,22 @@ class PipelineWarningEngine:
 
         if recording is None:
             warnings.append(
-                "Open an EEG recording to "
-                "validate this step against "
-                "real recording metadata."
+                (
+                    "Open an EEG recording "
+                    "to validate this step "
+                    "against recording metadata."
+                )
             )
 
             return warnings
 
-        sfreq = (
+        sampling_frequency = (
             recording.sampling_frequency
         )
 
         nyquist = (
-            sfreq / 2.0
+            sampling_frequency
+            / 2.0
         )
 
         # =====================================================
@@ -58,15 +61,19 @@ class PipelineWarningEngine:
 
             if highpass <= 0:
                 warnings.append(
-                    "High-pass frequency must "
-                    "be greater than 0 Hz."
+                    (
+                        "High-pass frequency "
+                        "must be greater than 0 Hz."
+                    )
                 )
 
             if lowpass <= highpass:
                 warnings.append(
-                    "Low-pass frequency must "
-                    "be greater than high-pass "
-                    "frequency."
+                    (
+                        "Low-pass frequency "
+                        "must be greater than "
+                        "high-pass frequency."
+                    )
                 )
 
             if lowpass >= nyquist:
@@ -74,8 +81,7 @@ class PipelineWarningEngine:
                     (
                         "Low-pass frequency must "
                         "remain below the Nyquist "
-                        f"frequency of "
-                        f"{nyquist:.1f} Hz."
+                        f"frequency of {nyquist:.1f} Hz."
                     )
                 )
 
@@ -99,8 +105,7 @@ class PipelineWarningEngine:
                     (
                         "Notch frequency must "
                         "remain below the Nyquist "
-                        f"frequency of "
-                        f"{nyquist:.1f} Hz."
+                        f"frequency of {nyquist:.1f} Hz."
                     )
                 )
 
@@ -112,16 +117,21 @@ class PipelineWarningEngine:
             step.step_type
             == StepType.AVERAGE_REFERENCE
         ):
-            excluded = list(
+            manually_excluded = list(
                 step.parameters.get(
                     "exclude_channels",
                     [],
                 )
             )
 
+            bad_channels = list(
+                recording.bad_channels
+            )
+
             unknown = [
                 channel
-                for channel in excluded
+                for channel
+                in manually_excluded
                 if channel
                 not in recording.eeg_channels
             ]
@@ -129,40 +139,60 @@ class PipelineWarningEngine:
             if unknown:
                 warnings.append(
                     (
-                        "Excluded reference "
-                        "channels were not found "
-                        "in the EEG: "
+                        "Manual reference exclusions "
+                        "were not found in the EEG: "
                         + ", ".join(
                             unknown
                         )
                     )
                 )
 
-            included = [
+            combined_exclusions = set(
+                manually_excluded
+            ) | set(
+                bad_channels
+            )
+
+            eligible = [
                 channel
                 for channel
                 in recording.eeg_channels
                 if channel
-                not in excluded
+                not in combined_exclusions
             ]
 
-            if len(included) < 2:
+            if len(
+                eligible
+            ) < 2:
                 warnings.append(
-                    "Average reference requires "
-                    "at least two eligible EEG "
-                    "channels."
+                    (
+                        "Average reference has "
+                        "fewer than two eligible "
+                        "EEG channels."
+                    )
                 )
 
-            warnings.append(
-                (
-                    "Ordinary average reference "
-                    "can be contaminated by noisy "
-                    "channels. Review bad channels "
-                    "or exclude known noisy "
-                    "channels before relying on "
-                    "this reference."
+            if bad_channels:
+                warnings.append(
+                    (
+                        "Marked bad channels will "
+                        "be automatically excluded "
+                        "from the average reference: "
+                        + ", ".join(
+                            bad_channels
+                        )
+                    )
                 )
-            )
+
+            else:
+                warnings.append(
+                    (
+                        "No channels are currently "
+                        "marked bad. Review Channel "
+                        "Quality before relying on "
+                        "an ordinary average reference."
+                    )
+                )
 
             step_index = (
                 pipeline.steps.index(
@@ -170,7 +200,7 @@ class PipelineWarningEngine:
                 )
             )
 
-            enabled_bandpass_indices = [
+            bandpass_indices = [
                 index
                 for index, candidate
                 in enumerate(
@@ -184,19 +214,19 @@ class PipelineWarningEngine:
             ]
 
             if (
-                enabled_bandpass_indices
+                bandpass_indices
                 and step_index
-                < enabled_bandpass_indices[0]
+                < bandpass_indices[
+                    0
+                ]
             ):
                 warnings.append(
                     (
                         "Order note: Average "
                         "Reference currently runs "
                         "before Band-pass Filter. "
-                        "Pipeline order changes "
-                        "downstream values; verify "
-                        "that this ordering is "
-                        "intentional."
+                        "Verify that this ordering "
+                        "is intentional."
                     )
                 )
 

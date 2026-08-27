@@ -3,7 +3,9 @@ from pathlib import Path
 import numpy as np
 from mne.io import BaseRaw
 
-from synaptix.io.loaders import load_raw
+from synaptix.io.loaders import (
+    load_raw,
+)
 
 
 class Recording:
@@ -13,7 +15,10 @@ class Recording:
         source_path: Path,
     ):
         self._raw = raw
-        self.source_path = source_path
+
+        self.source_path = (
+            source_path
+        )
 
     # =========================================================
     # Construction
@@ -24,7 +29,9 @@ class Recording:
         cls,
         filepath: str | Path,
     ) -> "Recording":
-        path = Path(filepath)
+        path = Path(
+            filepath
+        )
 
         raw = load_raw(
             path
@@ -100,7 +107,9 @@ class Recording:
         self,
     ) -> float:
         return float(
-            self._raw.info["sfreq"]
+            self._raw.info[
+                "sfreq"
+            ]
         )
 
     @property
@@ -111,6 +120,104 @@ class Recording:
             self._raw.n_times
             / self.sampling_frequency
         )
+
+    # =========================================================
+    # Bad channels
+    # =========================================================
+
+    @property
+    def bad_channels(
+        self,
+    ) -> list[str]:
+        return list(
+            self._raw.info[
+                "bads"
+            ]
+        )
+
+    def mark_bad_channel(
+        self,
+        channel: str,
+    ):
+        if channel not in self.channels:
+            raise ValueError(
+                (
+                    "Unknown channel: "
+                    f"{channel}"
+                )
+            )
+
+        bads = list(
+            self._raw.info[
+                "bads"
+            ]
+        )
+
+        if channel not in bads:
+            bads.append(
+                channel
+            )
+
+        self._raw.info[
+            "bads"
+        ] = bads
+
+    def mark_good_channel(
+        self,
+        channel: str,
+    ):
+        if channel not in self.channels:
+            raise ValueError(
+                (
+                    "Unknown channel: "
+                    f"{channel}"
+                )
+            )
+
+        bads = [
+            bad
+            for bad
+            in self._raw.info[
+                "bads"
+            ]
+            if bad != channel
+        ]
+
+        self._raw.info[
+            "bads"
+        ] = bads
+
+    def set_bad_channels(
+        self,
+        channels: list[str],
+    ):
+        unknown = [
+            channel
+            for channel in channels
+            if channel
+            not in self.channels
+        ]
+
+        if unknown:
+            raise ValueError(
+                (
+                    "Unknown bad channels: "
+                    + ", ".join(
+                        unknown
+                    )
+                )
+            )
+
+        ordered = [
+            channel
+            for channel
+            in self.channels
+            if channel in channels
+        ]
+
+        self._raw.info[
+            "bads"
+        ] = ordered
 
     # =========================================================
     # Window access
@@ -153,7 +260,8 @@ class Recording:
                 self._raw.ch_names.index(
                     channel
                 )
-                for channel in channels
+                for channel
+                in channels
             ]
 
         else:
@@ -163,10 +271,12 @@ class Recording:
                 )
             )
 
-        data, times = self._raw[
-            picks,
-            start_sample:stop_sample,
-        ]
+        data, times = (
+            self._raw[
+                picks,
+                start_sample:stop_sample,
+            ]
+        )
 
         return (
             data,

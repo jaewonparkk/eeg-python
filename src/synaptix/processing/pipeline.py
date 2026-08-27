@@ -1,4 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import (
+    dataclass,
+)
 
 import numpy as np
 
@@ -34,12 +36,10 @@ class ProcessingWindow:
 
 class EEGProcessingPipeline:
     """
-    Non-destructive preview engine.
+    Non-destructive EEG preview engine.
 
-    Pipeline steps execute in the exact order
-    configured by the user.
-
-    The original Recording is never modified.
+    Steps execute in the exact user-configured order.
+    The original Recording signal is never modified.
     """
 
     def __init__(
@@ -62,7 +62,9 @@ class EEGProcessingPipeline:
         channels: list[str],
     ) -> ProcessingWindow:
         if not channels:
-            return self._empty_result()
+            return self._empty_result(
+                channels
+            )
 
         requested_start = max(
             0.0,
@@ -84,14 +86,18 @@ class EEGProcessingPipeline:
 
         context_start = max(
             0.0,
-            requested_start
-            - padding,
+            (
+                requested_start
+                - padding
+            ),
         )
 
         context_end = min(
             recording.duration_seconds,
-            requested_end
-            + padding,
+            (
+                requested_end
+                + padding
+            ),
         )
 
         context_duration = (
@@ -99,10 +105,9 @@ class EEGProcessingPipeline:
             - context_start
         )
 
-        # -----------------------------------------------------
-        # Average reference needs access to all EEG channels,
-        # not only the channels currently visible.
-        # -----------------------------------------------------
+        # =====================================================
+        # Reference requires all EEG channels
+        # =====================================================
 
         average_reference_enabled = any(
             (
@@ -129,7 +134,9 @@ class EEGProcessingPipeline:
 
         raw_context, context_times = (
             recording.get_window(
-                start_seconds=context_start,
+                start_seconds=(
+                    context_start
+                ),
                 duration_seconds=(
                     context_duration
                 ),
@@ -140,16 +147,20 @@ class EEGProcessingPipeline:
         )
 
         if raw_context.size == 0:
-            return self._empty_result()
+            return self._empty_result(
+                channels
+            )
 
-        processed_context = np.array(
-            raw_context,
-            dtype=np.float64,
-            copy=True,
+        processed_context = (
+            np.array(
+                raw_context,
+                dtype=np.float64,
+                copy=True,
+            )
         )
 
         # =====================================================
-        # Execute configured pipeline IN ORDER
+        # Execute pipeline in exact order
         # =====================================================
 
         for step in (
@@ -170,31 +181,37 @@ class EEGProcessingPipeline:
             )
 
         # =====================================================
-        # Return only visible channels
+        # Return visible channels only
         # =====================================================
 
         display_indices = [
             processing_channels.index(
                 channel
             )
-            for channel in channels
+            for channel
+            in channels
         ]
 
-        mask = (
-            (context_times >= requested_start)
+        visible_mask = (
+            (
+                context_times
+                >= requested_start
+            )
             & (
                 context_times
                 < requested_end
             )
         )
 
-        raw_visible = raw_context[
-            display_indices,
-            :
-        ][
-            :,
-            mask,
-        ]
+        raw_visible = (
+            raw_context[
+                display_indices,
+                :
+            ][
+                :,
+                visible_mask,
+            ]
+        )
 
         processed_visible = (
             processed_context[
@@ -202,18 +219,20 @@ class EEGProcessingPipeline:
                 :
             ][
                 :,
-                mask,
+                visible_mask,
             ]
         )
 
         times = context_times[
-            mask
+            visible_mask
         ]
 
         return ProcessingWindow(
             times=times,
             raw_data=raw_visible,
-            processed_data=processed_visible,
+            processed_data=(
+                processed_visible
+            ),
             channels=list(
                 channels
             ),
@@ -238,7 +257,8 @@ class EEGProcessingPipeline:
                 data=data,
                 step=step,
                 sampling_frequency=(
-                    recording.sampling_frequency
+                    recording
+                    .sampling_frequency
                 ),
             )
 
@@ -250,7 +270,8 @@ class EEGProcessingPipeline:
                 data=data,
                 step=step,
                 sampling_frequency=(
-                    recording.sampling_frequency
+                    recording
+                    .sampling_frequency
                 ),
             )
 
@@ -258,13 +279,17 @@ class EEGProcessingPipeline:
             step.step_type
             == StepType.AVERAGE_REFERENCE
         ):
-            return self._average_reference(
-                data=data,
-                step=step,
-                channel_names=(
-                    channel_names
-                ),
-                recording=recording,
+            return (
+                self._average_reference(
+                    data=data,
+                    step=step,
+                    channel_names=(
+                        channel_names
+                    ),
+                    recording=(
+                        recording
+                    ),
+                )
             )
 
         return data
@@ -307,14 +332,18 @@ class EEGProcessingPipeline:
 
         if highpass <= 0:
             raise ValueError(
-                "High-pass must be "
-                "greater than 0 Hz."
+                (
+                    "High-pass must be "
+                    "greater than 0 Hz."
+                )
             )
 
         if lowpass <= highpass:
             raise ValueError(
-                "Low-pass must be greater "
-                "than high-pass."
+                (
+                    "Low-pass must be "
+                    "greater than high-pass."
+                )
             )
 
         if lowpass >= nyquist:
@@ -333,7 +362,9 @@ class EEGProcessingPipeline:
                 lowpass,
             ],
             btype="bandpass",
-            fs=sampling_frequency,
+            fs=(
+                sampling_frequency
+            ),
             output="sos",
         )
 
@@ -377,15 +408,16 @@ class EEGProcessingPipeline:
                 (
                     "Notch frequency must "
                     "remain below Nyquist "
-                    f"frequency "
-                    f"({nyquist:.1f} Hz)."
+                    f"frequency ({nyquist:.1f} Hz)."
                 )
             )
 
         b, a = iirnotch(
             w0=frequency,
             Q=quality_factor,
-            fs=sampling_frequency,
+            fs=(
+                sampling_frequency
+            ),
         )
 
         return filtfilt(
@@ -406,11 +438,15 @@ class EEGProcessingPipeline:
         channel_names: list[str],
         recording: Recording,
     ) -> np.ndarray:
-        excluded = set(
+        manually_excluded = set(
             step.parameters.get(
                 "exclude_channels",
                 [],
             )
+        )
+
+        bad_channels = set(
+            recording.bad_channels
         )
 
         eeg_indices = [
@@ -423,29 +459,45 @@ class EEGProcessingPipeline:
             in recording.eeg_channels
         ]
 
+        # -----------------------------------------------------
+        # Channels used to CALCULATE reference
+        # -----------------------------------------------------
+
         reference_indices = [
             index
             for index
             in eeg_indices
-            if channel_names[index]
-            not in excluded
+            if (
+                channel_names[
+                    index
+                ]
+                not in manually_excluded
+                and channel_names[
+                    index
+                ]
+                not in bad_channels
+            )
         ]
 
-        if len(reference_indices) < 2:
+        if len(
+            reference_indices
+        ) < 2:
             raise ValueError(
                 (
                     "Average reference needs "
                     "at least two eligible "
-                    "EEG channels."
+                    "good EEG channels."
                 )
             )
 
-        reference_signal = np.mean(
-            data[
-                reference_indices,
-                :
-            ],
-            axis=0,
+        reference_signal = (
+            np.mean(
+                data[
+                    reference_indices,
+                    :
+                ],
+                axis=0,
+            )
         )
 
         output = np.array(
@@ -453,12 +505,29 @@ class EEGProcessingPipeline:
             copy=True,
         )
 
+        # -----------------------------------------------------
+        # Match MNE-style bad-channel behavior:
+        # marked bad channels remain untouched.
+        # -----------------------------------------------------
+
+        target_indices = [
+            index
+            for index
+            in eeg_indices
+            if (
+                channel_names[
+                    index
+                ]
+                not in bad_channels
+            )
+        ]
+
         output[
-            eeg_indices,
+            target_indices,
             :
         ] = (
             output[
-                eeg_indices,
+                target_indices,
                 :
             ]
             - reference_signal
@@ -474,11 +543,8 @@ class EEGProcessingPipeline:
     def _empty_result(
         channels: list[str] | None = None,
     ) -> ProcessingWindow:
-        channels = (
-            channels
-            if channels is not None
-            else []
-        )
+        if channels is None:
+            channels = []
 
         return ProcessingWindow(
             times=np.array([]),

@@ -28,7 +28,11 @@ from synaptix.processing.script_generator import (
     generate_pipeline_script,
 )
 from synaptix.processing.script_parser import (
+    parse_bad_channels,
     parse_pipeline_script,
+)
+from synaptix.ui.channel_quality_panel import (
+    ChannelQualityPanel,
 )
 from synaptix.ui.detection_panel import (
     DetectionPanel,
@@ -49,6 +53,7 @@ from synaptix.ui.step_inspector import (
     StepInspector,
 )
 from synaptix.ui.workers import (
+    ChannelQualityWorker,
     DetectionWorker,
 )
 
@@ -71,6 +76,11 @@ class MainWindow(QMainWindow):
             DetectionWorker | None
         ) = None
 
+        self.channel_quality_worker: (
+            ChannelQualityWorker
+            | None
+        ) = None
+
         self.pipeline_config = (
             PipelineConfiguration.default()
         )
@@ -84,12 +94,12 @@ class MainWindow(QMainWindow):
         )
 
         self.resize(
-            1700,
-            1050,
+            1750,
+            1080,
         )
 
         # =====================================================
-        # Top bar
+        # Top
         # =====================================================
 
         self.open_button = QPushButton(
@@ -101,7 +111,10 @@ class MainWindow(QMainWindow):
         )
 
         self.info_label = QLabel(
-            "Open an EEG recording to begin."
+            (
+                "Open an EEG recording "
+                "to begin."
+            )
         )
 
         top_layout = QHBoxLayout()
@@ -116,7 +129,7 @@ class MainWindow(QMainWindow):
         )
 
         # =====================================================
-        # Left side
+        # Left
         # =====================================================
 
         self.pipeline_panel = (
@@ -131,7 +144,9 @@ class MainWindow(QMainWindow):
             DetectionPanel()
         )
 
-        self.left_tabs = QTabWidget()
+        self.left_tabs = (
+            QTabWidget()
+        )
 
         self.left_tabs.addTab(
             self.pipeline_panel,
@@ -148,17 +163,19 @@ class MainWindow(QMainWindow):
         )
 
         # =====================================================
-        # EEG viewer
+        # Viewer
         # =====================================================
 
-        self.viewer = EEGViewer()
+        self.viewer = (
+            EEGViewer()
+        )
 
         self.viewer.set_pipeline_config(
             self.pipeline_config
         )
 
         # =====================================================
-        # Right side
+        # Right panels
         # =====================================================
 
         self.step_inspector = (
@@ -169,11 +186,22 @@ class MainWindow(QMainWindow):
             ReviewPanel()
         )
 
-        self.right_tabs = QTabWidget()
+        self.channel_quality_panel = (
+            ChannelQualityPanel()
+        )
+
+        self.right_tabs = (
+            QTabWidget()
+        )
 
         self.right_tabs.addTab(
             self.step_inspector,
             "Step Details",
+        )
+
+        self.right_tabs.addTab(
+            self.channel_quality_panel,
+            "Channel Quality",
         )
 
         self.right_tabs.addTab(
@@ -182,11 +210,11 @@ class MainWindow(QMainWindow):
         )
 
         self.right_tabs.setMinimumWidth(
-            330
+            360
         )
 
         # =====================================================
-        # Horizontal workspace
+        # Workspace
         # =====================================================
 
         self.horizontal_splitter = (
@@ -226,12 +254,12 @@ class MainWindow(QMainWindow):
             [
                 290,
                 1050,
-                350,
+                390,
             ]
         )
 
         # =====================================================
-        # Script editor
+        # Script
         # =====================================================
 
         self.script_preview = (
@@ -264,13 +292,13 @@ class MainWindow(QMainWindow):
 
         self.vertical_splitter.setSizes(
             [
-                700,
-                330,
+                720,
+                340,
             ]
         )
 
         # =====================================================
-        # Signals
+        # Signals: Pipeline
         # =====================================================
 
         self.pipeline_panel.pipeline_changed.connect(
@@ -285,6 +313,10 @@ class MainWindow(QMainWindow):
             self._step_settings_changed
         )
 
+        # =====================================================
+        # Signals: Script
+        # =====================================================
+
         self.script_preview.apply_requested.connect(
             self._apply_script_to_pipeline
         )
@@ -292,6 +324,10 @@ class MainWindow(QMainWindow):
         self.script_preview.regenerate_requested.connect(
             self._regenerate_script
         )
+
+        # =====================================================
+        # Signals: artifact detection
+        # =====================================================
 
         self.detection_panel.run_requested.connect(
             self.run_detection
@@ -306,10 +342,28 @@ class MainWindow(QMainWindow):
         )
 
         # =====================================================
+        # Signals: Channel Quality
+        # =====================================================
+
+        self.channel_quality_panel.analyze_requested.connect(
+            self.run_channel_quality
+        )
+
+        self.channel_quality_panel.mark_bad_requested.connect(
+            self._mark_bad_channel
+        )
+
+        self.channel_quality_panel.keep_requested.connect(
+            self._mark_good_channel
+        )
+
+        # =====================================================
         # Root
         # =====================================================
 
-        root_layout = QVBoxLayout()
+        root_layout = (
+            QVBoxLayout()
+        )
 
         root_layout.addLayout(
             top_layout
@@ -331,7 +385,7 @@ class MainWindow(QMainWindow):
         )
 
         # =====================================================
-        # Initial state
+        # Initial
         # =====================================================
 
         self._update_script()
@@ -356,17 +410,13 @@ class MainWindow(QMainWindow):
     def open_eeg(
         self,
     ):
-        if (
-            self.detection_worker
-            is not None
-            and self.detection_worker.isRunning()
-        ):
+        if self._worker_running():
             QMessageBox.warning(
                 self,
-                "Detection in progress",
+                "Background task running",
                 (
                     "Wait for the current "
-                    "candidate scan to finish."
+                    "analysis to finish first."
                 ),
             )
 
@@ -395,7 +445,9 @@ class MainWindow(QMainWindow):
                 )
             )
 
-            self.recording = recording
+            self.recording = (
+                recording
+            )
 
             self.viewer.set_recording(
                 recording
@@ -413,6 +465,12 @@ class MainWindow(QMainWindow):
                 []
             )
 
+            self.channel_quality_panel.clear_results()
+
+            self.channel_quality_panel.refresh_bad_states(
+                recording.bad_channels
+            )
+
             self.info_label.setText(
                 (
                     f"{recording.name}"
@@ -423,11 +481,14 @@ class MainWindow(QMainWindow):
                     f"{recording.sampling_frequency:.0f} Hz"
                     "  •  "
                     f"{self._format_duration(recording.duration_seconds)}"
+                    "  •  "
+                    f"{len(recording.bad_channels)} bad"
                 )
             )
 
             current_step = (
-                self.pipeline_panel.current_step()
+                self.pipeline_panel
+                .current_step()
             )
 
             if current_step is not None:
@@ -443,13 +504,6 @@ class MainWindow(QMainWindow):
 
             self._update_script()
 
-            self.script_preview.set_status(
-                (
-                    "EEG loaded. Script regenerated "
-                    "from the current pipeline."
-                )
-            )
-
         except Exception as error:
             QMessageBox.critical(
                 self,
@@ -458,44 +512,24 @@ class MainWindow(QMainWindow):
             )
 
     # =========================================================
-    # Pipeline changed through UI
+    # Pipeline
     # =========================================================
 
     def _pipeline_changed(
         self,
         pipeline: PipelineConfiguration,
     ):
-        self.pipeline_config = pipeline
+        self.pipeline_config = (
+            pipeline
+        )
 
         self.viewer.set_pipeline_config(
             pipeline
         )
 
-        current_step = (
-            self.pipeline_panel.current_step()
-        )
-
-        if current_step is not None:
-            self.step_inspector.set_step(
-                step=current_step,
-                pipeline=pipeline,
-                recording=(
-                    self.recording
-                ),
-            )
+        self._refresh_step_inspector()
 
         self._update_script()
-
-        self.script_preview.set_status(
-            (
-                "Script updated from "
-                "pipeline changes."
-            )
-        )
-
-    # =========================================================
-    # Step selected
-    # =========================================================
 
     def _step_selected(
         self,
@@ -514,10 +548,6 @@ class MainWindow(QMainWindow):
         self.right_tabs.setCurrentWidget(
             self.step_inspector
         )
-
-    # =========================================================
-    # Step settings changed
-    # =========================================================
 
     def _step_settings_changed(
         self,
@@ -545,15 +575,8 @@ class MainWindow(QMainWindow):
             ),
         )
 
-        self.script_preview.set_status(
-            (
-                "Script updated from "
-                "step settings."
-            )
-        )
-
     # =========================================================
-    # Script -> Pipeline
+    # Script
     # =========================================================
 
     def _apply_script_to_pipeline(
@@ -570,6 +593,34 @@ class MainWindow(QMainWindow):
                 )
             )
 
+            parsed_bad_channels = (
+                parse_bad_channels(
+                    script
+                )
+            )
+
+            if (
+                parsed_bad_channels
+                is not None
+            ):
+                if (
+                    self.recording
+                    is None
+                ):
+                    if parsed_bad_channels:
+                        raise ValueError(
+                            (
+                                "Open an EEG recording "
+                                "before applying "
+                                "BAD_CHANNELS."
+                            )
+                        )
+
+                else:
+                    self.recording.set_bad_channels(
+                        parsed_bad_channels
+                    )
+
         except ValueError as error:
             self.script_preview.set_status(
                 (
@@ -584,51 +635,30 @@ class MainWindow(QMainWindow):
             parsed_pipeline
         )
 
-        # -----------------------------------------------------
-        # Update pipeline UI
-        # -----------------------------------------------------
-
         self.pipeline_panel.set_pipeline(
             parsed_pipeline
         )
-
-        # -----------------------------------------------------
-        # Update processed EEG
-        # -----------------------------------------------------
 
         self.viewer.set_pipeline_config(
             parsed_pipeline
         )
 
-        # -----------------------------------------------------
-        # Update inspector
-        # -----------------------------------------------------
-
-        current_step = (
-            self.pipeline_panel.current_step()
-        )
-
-        if current_step is not None:
-            self.step_inspector.set_step(
-                step=current_step,
-                pipeline=(
-                    parsed_pipeline
-                ),
-                recording=(
-                    self.recording
-                ),
+        if self.recording is not None:
+            self.channel_quality_panel.refresh_bad_states(
+                self.recording.bad_channels
             )
+
+        self._refresh_step_inspector()
+
+        self._refresh_recording_status()
 
         self.script_preview.set_status(
             (
-                "✓ Script settings applied to pipeline. "
-                "Processed preview updated."
+                "✓ Script settings applied. "
+                "Pipeline, bad-channel state, "
+                "and processed preview updated."
             )
         )
-
-    # =========================================================
-    # Pipeline -> Script
-    # =========================================================
 
     def _regenerate_script(
         self,
@@ -637,19 +667,29 @@ class MainWindow(QMainWindow):
 
         self.script_preview.set_status(
             (
-                "✓ Script regenerated from "
-                "the current pipeline."
+                "✓ Script regenerated "
+                "from current state."
             )
         )
 
     def _update_script(
         self,
     ):
-        path = (
-            self.recording.source_path
-            if self.recording is not None
-            else None
-        )
+        if self.recording is None:
+            path = None
+
+            bad_channels: list[
+                str
+            ] = []
+
+        else:
+            path = (
+                self.recording.source_path
+            )
+
+            bad_channels = (
+                self.recording.bad_channels
+            )
 
         script = (
             generate_pipeline_script(
@@ -657,12 +697,180 @@ class MainWindow(QMainWindow):
                     self.pipeline_config
                 ),
                 input_path=path,
+                bad_channels=(
+                    bad_channels
+                ),
             )
         )
 
         self.script_preview.set_script(
             script
         )
+
+    # =========================================================
+    # Channel Quality
+    # =========================================================
+
+    def run_channel_quality(
+        self,
+        thresholds,
+    ):
+        if self.recording is None:
+            QMessageBox.warning(
+                self,
+                "No EEG loaded",
+                (
+                    "Open an EEG recording "
+                    "before analyzing "
+                    "channel quality."
+                ),
+            )
+
+            return
+
+        if self._worker_running():
+            return
+
+        self.channel_quality_panel.set_running(
+            True
+        )
+
+        self.open_button.setEnabled(
+            False
+        )
+
+        self.channel_quality_worker = (
+            ChannelQualityWorker(
+                recording=(
+                    self.recording
+                ),
+                thresholds=(
+                    thresholds
+                ),
+            )
+        )
+
+        self.channel_quality_worker.progress_changed.connect(
+            self.channel_quality_panel.set_progress
+        )
+
+        self.channel_quality_worker.analysis_completed.connect(
+            self._channel_quality_completed
+        )
+
+        self.channel_quality_worker.analysis_failed.connect(
+            self._channel_quality_failed
+        )
+
+        self.channel_quality_worker.finished.connect(
+            self._background_worker_finished
+        )
+
+        self.channel_quality_worker.start()
+
+    def _channel_quality_completed(
+        self,
+        results: list,
+    ):
+        self.channel_quality_panel.set_results(
+            results
+        )
+
+        if self.recording is not None:
+            self.channel_quality_panel.refresh_bad_states(
+                self.recording.bad_channels
+            )
+
+        self.right_tabs.setCurrentWidget(
+            self.channel_quality_panel
+        )
+
+    def _channel_quality_failed(
+        self,
+        message: str,
+    ):
+        self.channel_quality_panel.set_error(
+            message
+        )
+
+        QMessageBox.critical(
+            self,
+            "Channel analysis failed",
+            message,
+        )
+
+    # =========================================================
+    # Bad channel decisions
+    # =========================================================
+
+    def _mark_bad_channel(
+        self,
+        channel: str,
+    ):
+        if self.recording is None:
+            return
+
+        try:
+            self.recording.mark_bad_channel(
+                channel
+            )
+
+        except ValueError as error:
+            QMessageBox.warning(
+                self,
+                "Unable to mark channel",
+                str(error),
+            )
+
+            return
+
+        self._bad_channel_state_changed()
+
+    def _mark_good_channel(
+        self,
+        channel: str,
+    ):
+        if self.recording is None:
+            return
+
+        try:
+            self.recording.mark_good_channel(
+                channel
+            )
+
+        except ValueError as error:
+            QMessageBox.warning(
+                self,
+                "Unable to update channel",
+                str(error),
+            )
+
+            return
+
+        self._bad_channel_state_changed()
+
+    def _bad_channel_state_changed(
+        self,
+    ):
+        if self.recording is None:
+            return
+
+        self.channel_quality_panel.refresh_bad_states(
+            self.recording.bad_channels
+        )
+
+        # Average-reference preview must recompute.
+        self.viewer.set_pipeline_config(
+            self.pipeline_config
+        )
+
+        # Warnings now depend on bad-channel state.
+        self._refresh_step_inspector()
+
+        # Script must remain reproducible.
+        self._update_script()
+
+        self._refresh_recording_status()
 
     # =========================================================
     # Detection
@@ -684,11 +892,7 @@ class MainWindow(QMainWindow):
 
             return
 
-        if (
-            self.detection_worker
-            is not None
-            and self.detection_worker.isRunning()
-        ):
+        if self._worker_running():
             return
 
         self.viewer.set_artifact_candidates(
@@ -709,8 +913,12 @@ class MainWindow(QMainWindow):
 
         self.detection_worker = (
             DetectionWorker(
-                recording=self.recording,
-                thresholds=thresholds,
+                recording=(
+                    self.recording
+                ),
+                thresholds=(
+                    thresholds
+                ),
             )
         )
 
@@ -727,7 +935,7 @@ class MainWindow(QMainWindow):
         )
 
         self.detection_worker.finished.connect(
-            self._detection_worker_finished
+            self._background_worker_finished
         )
 
         self.detection_worker.start()
@@ -771,13 +979,6 @@ class MainWindow(QMainWindow):
             message,
         )
 
-    def _detection_worker_finished(
-        self,
-    ):
-        self.open_button.setEnabled(
-            True
-        )
-
     # =========================================================
     # Candidate
     # =========================================================
@@ -789,8 +990,79 @@ class MainWindow(QMainWindow):
         self.viewer.render()
 
     # =========================================================
-    # Helper
+    # Helpers
     # =========================================================
+
+    def _worker_running(
+        self,
+    ) -> bool:
+        detection_running = (
+            self.detection_worker
+            is not None
+            and self.detection_worker
+            .isRunning()
+        )
+
+        channel_running = (
+            self.channel_quality_worker
+            is not None
+            and self.channel_quality_worker
+            .isRunning()
+        )
+
+        return (
+            detection_running
+            or channel_running
+        )
+
+    def _background_worker_finished(
+        self,
+    ):
+        self.open_button.setEnabled(
+            True
+        )
+
+    def _refresh_step_inspector(
+        self,
+    ):
+        current_step = (
+            self.pipeline_panel
+            .current_step()
+        )
+
+        if current_step is None:
+            return
+
+        self.step_inspector.set_step(
+            step=current_step,
+            pipeline=(
+                self.pipeline_config
+            ),
+            recording=(
+                self.recording
+            ),
+        )
+
+    def _refresh_recording_status(
+        self,
+    ):
+        if self.recording is None:
+            return
+
+        self.info_label.setText(
+            (
+                f"{self.recording.name}"
+                "  •  "
+                f"{self.recording.eeg_channel_count} "
+                "EEG channels"
+                "  •  "
+                f"{self.recording.sampling_frequency:.0f} Hz"
+                "  •  "
+                f"{self._format_duration(self.recording.duration_seconds)}"
+                "  •  "
+                f"{len(self.recording.bad_channels)} bad"
+            )
+        )
 
     @staticmethod
     def _format_duration(

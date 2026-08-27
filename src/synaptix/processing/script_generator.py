@@ -2,18 +2,21 @@ from pathlib import Path
 
 from synaptix.models.pipeline import (
     PipelineConfiguration,
-    StepType,
 )
 
 
 def generate_pipeline_script(
     pipeline: PipelineConfiguration,
     input_path: Path | None = None,
+    bad_channels: list[str] | None = None,
 ) -> str:
     if input_path is None:
         input_path = Path(
             "recording.set"
         )
+
+    if bad_channels is None:
+        bad_channels = []
 
     bandpass = pipeline.get_step(
         "bandpass"
@@ -28,7 +31,7 @@ def generate_pipeline_script(
     )
 
     # =========================================================
-    # Current configuration
+    # Configuration values
     # =========================================================
 
     bandpass_enabled = (
@@ -120,10 +123,6 @@ def generate_pipeline_script(
         for step in pipeline.steps
     ]
 
-    # =========================================================
-    # Generate runnable Python script
-    # =========================================================
-
     lines = [
         "from pathlib import Path",
         "",
@@ -132,14 +131,13 @@ def generate_pipeline_script(
         "",
         "# ========================================================",
         "# SYNAPTIX PIPELINE CONFIGURATION",
-        "#",
-        "# You can edit the values in this section and then",
-        "# paste/apply this script back into Synaptix.",
         "# ========================================================",
         "",
         f"INPUT_PATH = Path({str(input_path)!r})",
         "",
         f"PIPELINE_ORDER = {pipeline_order!r}",
+        "",
+        f"BAD_CHANNELS = {bad_channels!r}",
         "",
         f"BANDPASS_ENABLED = {bandpass_enabled!r}",
         f"HIGHPASS_HZ = {highpass_hz!r}",
@@ -213,6 +211,11 @@ def generate_pipeline_script(
         "    raw.filter(",
         "        l_freq=HIGHPASS_HZ,",
         "        h_freq=LOWPASS_HZ,",
+        '        method="iir",',
+        "        iir_params={",
+        '            "order": FILTER_ORDER,',
+        '            "ftype": "butter",',
+        "        },",
         "        verbose=False,",
         "    )",
         "",
@@ -242,10 +245,16 @@ def generate_pipeline_script(
         "            .ch_names",
         "        )",
         "",
+        "        excluded = set(",
+        "            REFERENCE_EXCLUDE",
+        "        ) | set(",
+        '            raw.info["bads"]',
+        "        )",
+        "",
         "        reference_channels = [",
         "            channel",
         "            for channel in eeg_channels",
-        "            if channel not in REFERENCE_EXCLUDE",
+        "            if channel not in excluded",
         "        ]",
         "",
         "        if len(reference_channels) < 2:",
@@ -284,7 +293,7 @@ def generate_pipeline_script(
         "    for step_name in PIPELINE_ORDER:",
         "        if step_name not in STEP_FUNCTIONS:",
         "            raise ValueError(",
-        "                f\"Unknown pipeline step: {step_name}\"",
+        '                f"Unknown pipeline step: {step_name}"',
         "            )",
         "",
         "        raw = STEP_FUNCTIONS[step_name](",
@@ -303,6 +312,20 @@ def generate_pipeline_script(
         "    INPUT_PATH",
         ")",
         "",
+        "unknown_bad_channels = [",
+        "    channel",
+        "    for channel in BAD_CHANNELS",
+        "    if channel not in raw.ch_names",
+        "]",
+        "",
+        "if unknown_bad_channels:",
+        "    raise ValueError(",
+        '        "Unknown BAD_CHANNELS: "',
+        '        + ", ".join(unknown_bad_channels)',
+        "    )",
+        "",
+        'raw.info["bads"] = list(BAD_CHANNELS)',
+        "",
         "raw = run_pipeline(",
         "    raw",
         ")",
@@ -317,7 +340,11 @@ def generate_pipeline_script(
         "    overwrite=True,",
         ")",
         "",
-        'print(f"Saved processed EEG to: {OUTPUT_PATH}")',
+        (
+            'print('
+            'f"Saved processed EEG to: {OUTPUT_PATH}"'
+            ')'
+        ),
     ]
 
     return "\n".join(
