@@ -1,5 +1,8 @@
 from pathlib import Path
 
+from synaptix.models.bridge import (
+    BridgeDetectionSettings,
+)
 from synaptix.models.pipeline import (
     PipelineConfiguration,
 )
@@ -9,6 +12,11 @@ def generate_pipeline_script(
     pipeline: PipelineConfiguration,
     input_path: Path | None = None,
     bad_channels: list[str] | None = None,
+    bridge_settings: BridgeDetectionSettings | None = None,
+    confirmed_bridges: list[
+        tuple[str, str]
+    ]
+    | None = None,
 ) -> str:
     if input_path is None:
         input_path = Path(
@@ -17,6 +25,14 @@ def generate_pipeline_script(
 
     if bad_channels is None:
         bad_channels = []
+
+    if bridge_settings is None:
+        bridge_settings = (
+            BridgeDetectionSettings()
+        )
+
+    if confirmed_bridges is None:
+        confirmed_bridges = []
 
     bandpass = pipeline.get_step(
         "bandpass"
@@ -30,10 +46,6 @@ def generate_pipeline_script(
         "average_reference"
     )
 
-    # =========================================================
-    # Configuration values
-    # =========================================================
-
     bandpass_enabled = (
         bandpass.enabled
         if bandpass is not None
@@ -41,36 +53,30 @@ def generate_pipeline_script(
     )
 
     highpass_hz = float(
-        (
-            bandpass.parameters.get(
-                "highpass_hz",
-                0.5,
-            )
-            if bandpass is not None
-            else 0.5
+        bandpass.parameters.get(
+            "highpass_hz",
+            0.5,
         )
+        if bandpass is not None
+        else 0.5
     )
 
     lowpass_hz = float(
-        (
-            bandpass.parameters.get(
-                "lowpass_hz",
-                45.0,
-            )
-            if bandpass is not None
-            else 45.0
+        bandpass.parameters.get(
+            "lowpass_hz",
+            45.0,
         )
+        if bandpass is not None
+        else 45.0
     )
 
     filter_order = int(
-        (
-            bandpass.parameters.get(
-                "order",
-                4,
-            )
-            if bandpass is not None
-            else 4
+        bandpass.parameters.get(
+            "order",
+            4,
         )
+        if bandpass is not None
+        else 4
     )
 
     notch_enabled = (
@@ -80,25 +86,21 @@ def generate_pipeline_script(
     )
 
     notch_hz = float(
-        (
-            notch.parameters.get(
-                "frequency_hz",
-                60.0,
-            )
-            if notch is not None
-            else 60.0
+        notch.parameters.get(
+            "frequency_hz",
+            60.0,
         )
+        if notch is not None
+        else 60.0
     )
 
     notch_q = float(
-        (
-            notch.parameters.get(
-                "quality_factor",
-                30.0,
-            )
-            if notch is not None
-            else 30.0
+        notch.parameters.get(
+            "quality_factor",
+            30.0,
         )
+        if notch is not None
+        else 30.0
     )
 
     reference_enabled = (
@@ -108,14 +110,12 @@ def generate_pipeline_script(
     )
 
     reference_exclude = list(
-        (
-            reference.parameters.get(
-                "exclude_channels",
-                [],
-            )
-            if reference is not None
-            else []
+        reference.parameters.get(
+            "exclude_channels",
+            [],
         )
+        if reference is not None
+        else []
     )
 
     pipeline_order = [
@@ -130,7 +130,7 @@ def generate_pipeline_script(
         "",
         "",
         "# ========================================================",
-        "# SYNAPTIX PIPELINE CONFIGURATION",
+        "# SYNAPTIX CONFIGURATION",
         "# ========================================================",
         "",
         f"INPUT_PATH = Path({str(input_path)!r})",
@@ -138,6 +138,35 @@ def generate_pipeline_script(
         f"PIPELINE_ORDER = {pipeline_order!r}",
         "",
         f"BAD_CHANNELS = {bad_channels!r}",
+        "",
+        (
+            "BRIDGE_DETECTION_ENABLED = "
+            f"{bridge_settings.enabled!r}"
+        ),
+        (
+            "BRIDGE_LM_CUTOFF_UV2 = "
+            f"{bridge_settings.lm_cutoff_uv2!r}"
+        ),
+        (
+            "BRIDGE_EPOCH_THRESHOLD = "
+            f"{bridge_settings.epoch_threshold!r}"
+        ),
+        (
+            "BRIDGE_L_FREQ = "
+            f"{bridge_settings.low_frequency_hz!r}"
+        ),
+        (
+            "BRIDGE_H_FREQ = "
+            f"{bridge_settings.high_frequency_hz!r}"
+        ),
+        (
+            "BRIDGE_EPOCH_DURATION = "
+            f"{bridge_settings.epoch_duration_seconds!r}"
+        ),
+        (
+            "CONFIRMED_BRIDGES = "
+            f"{confirmed_bridges!r}"
+        ),
         "",
         f"BANDPASS_ENABLED = {bandpass_enabled!r}",
         f"HIGHPASS_HZ = {highpass_hz!r}",
@@ -200,6 +229,43 @@ def generate_pipeline_script(
         "",
         "",
         "# ========================================================",
+        "# BRIDGE ANALYSIS",
+        "# ========================================================",
+        "",
+        "",
+        "def detect_bridges(raw):",
+        "    if not BRIDGE_DETECTION_ENABLED:",
+        "        return []",
+        "",
+        "    eeg_raw = (",
+        "        raw.copy()",
+        '        .pick("eeg")',
+        "    )",
+        "",
+        "    bridged_idx, _ = (",
+        "        mne.preprocessing",
+        "        .compute_bridged_electrodes(",
+        "            eeg_raw,",
+        "            lm_cutoff=BRIDGE_LM_CUTOFF_UV2,",
+        "            epoch_threshold=BRIDGE_EPOCH_THRESHOLD,",
+        "            l_freq=BRIDGE_L_FREQ,",
+        "            h_freq=BRIDGE_H_FREQ,",
+        "            epoch_duration=BRIDGE_EPOCH_DURATION,",
+        "            verbose=False,",
+        "        )",
+        "    )",
+        "",
+        "    return [",
+        "        (",
+        "            eeg_raw.ch_names[index_a],",
+        "            eeg_raw.ch_names[index_b],",
+        "        )",
+        "        for index_a, index_b",
+        "        in bridged_idx",
+        "    ]",
+        "",
+        "",
+        "# ========================================================",
         "# PIPELINE FUNCTIONS",
         "# ========================================================",
         "",
@@ -245,10 +311,9 @@ def generate_pipeline_script(
         "            .ch_names",
         "        )",
         "",
-        "        excluded = set(",
-        "            REFERENCE_EXCLUDE",
-        "        ) | set(",
-        '            raw.info["bads"]',
+        "        excluded = (",
+        "            set(REFERENCE_EXCLUDE)",
+        '            | set(raw.info["bads"])',
         "        )",
         "",
         "        reference_channels = [",
@@ -256,12 +321,6 @@ def generate_pipeline_script(
         "            for channel in eeg_channels",
         "            if channel not in excluded",
         "        ]",
-        "",
-        "        if len(reference_channels) < 2:",
-        "            raise ValueError(",
-        '                "Average reference requires at least "',
-        '                "two eligible EEG channels."',
-        "            )",
         "",
         "        raw.set_eeg_reference(",
         "            ref_channels=reference_channels,",
@@ -275,11 +334,6 @@ def generate_pipeline_script(
         "        )",
         "",
         "    return raw",
-        "",
-        "",
-        "# ========================================================",
-        "# PIPELINE EXECUTION",
-        "# ========================================================",
         "",
         "",
         "STEP_FUNCTIONS = {",
@@ -312,19 +366,24 @@ def generate_pipeline_script(
         "    INPUT_PATH",
         ")",
         "",
-        "unknown_bad_channels = [",
-        "    channel",
-        "    for channel in BAD_CHANNELS",
-        "    if channel not in raw.ch_names",
-        "]",
-        "",
-        "if unknown_bad_channels:",
-        "    raise ValueError(",
-        '        "Unknown BAD_CHANNELS: "',
-        '        + ", ".join(unknown_bad_channels)',
-        "    )",
-        "",
         'raw.info["bads"] = list(BAD_CHANNELS)',
+        "",
+        "detected_bridge_pairs = detect_bridges(",
+        "    raw",
+        ")",
+        "",
+        "print(",
+        '    "Detected bridge candidates:",',
+        "    detected_bridge_pairs,",
+        ")",
+        "",
+        "print(",
+        '    "Researcher-confirmed bridges:",',
+        "    CONFIRMED_BRIDGES,",
+        ")",
+        "",
+        "# Confirmed bridge pairs are recorded here.",
+        "# They are NOT automatically deleted or interpolated.",
         "",
         "raw = run_pipeline(",
         "    raw",
@@ -340,11 +399,7 @@ def generate_pipeline_script(
         "    overwrite=True,",
         ")",
         "",
-        (
-            'print('
-            'f"Saved processed EEG to: {OUTPUT_PATH}"'
-            ')'
-        ),
+        'print(f"Saved processed EEG to: {OUTPUT_PATH}")',
     ]
 
     return "\n".join(

@@ -3,6 +3,9 @@ from PySide6.QtCore import (
     Signal,
 )
 
+from synaptix.analysis.bridge_detection import (
+    ElectrodeBridgeAnalyzer,
+)
 from synaptix.analysis.channel_quality import (
     ChannelQualityAnalyzer,
 )
@@ -11,6 +14,9 @@ from synaptix.core.recording import (
 )
 from synaptix.detection.artifact_detector import (
     ArtifactDetector,
+)
+from synaptix.models.bridge import (
+    BridgeDetectionSettings,
 )
 from synaptix.models.channel_quality import (
     ChannelQualityThresholds,
@@ -40,23 +46,16 @@ class DetectionWorker(QThread):
     ):
         super().__init__()
 
-        self.recording = (
-            recording
-        )
-
-        self.thresholds = (
-            thresholds
-        )
+        self.recording = recording
+        self.thresholds = thresholds
 
     def run(
         self,
     ):
         try:
-            detector = (
-                ArtifactDetector(
-                    thresholds=(
-                        self.thresholds
-                    )
+            detector = ArtifactDetector(
+                thresholds=(
+                    self.thresholds
                 )
             )
 
@@ -104,13 +103,8 @@ class ChannelQualityWorker(
     ):
         super().__init__()
 
-        self.recording = (
-            recording
-        )
-
-        self.thresholds = (
-            thresholds
-        )
+        self.recording = recording
+        self.thresholds = thresholds
 
     def run(
         self,
@@ -133,6 +127,55 @@ class ChannelQualityWorker(
                     progress_callback=(
                         self.progress_changed.emit
                     ),
+                )
+            )
+
+            self.analysis_completed.emit(
+                results
+            )
+
+        except Exception as error:
+            self.analysis_failed.emit(
+                str(error)
+            )
+
+
+class BridgeDetectionWorker(
+    QThread
+):
+    analysis_completed = Signal(
+        list
+    )
+
+    analysis_failed = Signal(
+        str
+    )
+
+    def __init__(
+        self,
+        recording: Recording,
+        settings: BridgeDetectionSettings,
+    ):
+        super().__init__()
+
+        self.recording = recording
+        self.settings = settings
+
+    def run(
+        self,
+    ):
+        try:
+            analyzer = (
+                ElectrodeBridgeAnalyzer(
+                    settings=(
+                        self.settings
+                    )
+                )
+            )
+
+            results = (
+                analyzer.analyze_recording(
+                    self.recording
                 )
             )
 

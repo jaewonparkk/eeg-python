@@ -62,17 +62,17 @@ class PipelineWarningEngine:
             if highpass <= 0:
                 warnings.append(
                     (
-                        "High-pass frequency "
-                        "must be greater than 0 Hz."
+                        "High-pass frequency must "
+                        "be greater than 0 Hz."
                     )
                 )
 
             if lowpass <= highpass:
                 warnings.append(
                     (
-                        "Low-pass frequency "
-                        "must be greater than "
-                        "high-pass frequency."
+                        "Low-pass frequency must "
+                        "be greater than high-pass "
+                        "frequency."
                     )
                 )
 
@@ -81,7 +81,8 @@ class PipelineWarningEngine:
                     (
                         "Low-pass frequency must "
                         "remain below the Nyquist "
-                        f"frequency of {nyquist:.1f} Hz."
+                        f"frequency of "
+                        f"{nyquist:.1f} Hz."
                     )
                 )
 
@@ -105,7 +106,8 @@ class PipelineWarningEngine:
                     (
                         "Notch frequency must "
                         "remain below the Nyquist "
-                        f"frequency of {nyquist:.1f} Hz."
+                        f"frequency of "
+                        f"{nyquist:.1f} Hz."
                     )
                 )
 
@@ -128,6 +130,11 @@ class PipelineWarningEngine:
                 recording.bad_channels
             )
 
+            bridge_pairs = list(
+                recording
+                .confirmed_bridge_pairs
+            )
+
             unknown = [
                 channel
                 for channel
@@ -147,10 +154,13 @@ class PipelineWarningEngine:
                     )
                 )
 
-            combined_exclusions = set(
-                manually_excluded
-            ) | set(
-                bad_channels
+            combined_exclusions = (
+                set(
+                    manually_excluded
+                )
+                | set(
+                    bad_channels
+                )
             )
 
             eligible = [
@@ -191,6 +201,28 @@ class PipelineWarningEngine:
                         "marked bad. Review Channel "
                         "Quality before relying on "
                         "an ordinary average reference."
+                    )
+                )
+
+            if bridge_pairs:
+                pair_text = ", ".join(
+                    (
+                        f"{channel_a}↔{channel_b}"
+                        for (
+                            channel_a,
+                            channel_b,
+                        ) in bridge_pairs
+                    )
+                )
+
+                warnings.append(
+                    (
+                        "Confirmed electrode bridge "
+                        "pairs remain in the recording: "
+                        f"{pair_text}. Bridging can "
+                        "spatially smear EEG activity. "
+                        "Review bridge correction before "
+                        "finalizing preprocessing."
                     )
                 )
 

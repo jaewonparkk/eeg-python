@@ -18,6 +18,9 @@ from PySide6.QtWidgets import (
 from synaptix.core.recording import (
     Recording,
 )
+from synaptix.models.bridge import (
+    BridgeDetectionSettings,
+)
 from synaptix.models.pipeline import (
     PipelineConfiguration,
 )
@@ -29,7 +32,12 @@ from synaptix.processing.script_generator import (
 )
 from synaptix.processing.script_parser import (
     parse_bad_channels,
+    parse_bridge_settings,
+    parse_confirmed_bridges,
     parse_pipeline_script,
+)
+from synaptix.ui.bridge_panel import (
+    BridgePanel,
 )
 from synaptix.ui.channel_quality_panel import (
     ChannelQualityPanel,
@@ -53,6 +61,7 @@ from synaptix.ui.step_inspector import (
     StepInspector,
 )
 from synaptix.ui.workers import (
+    BridgeDetectionWorker,
     ChannelQualityWorker,
     DetectionWorker,
 )
@@ -77,12 +86,19 @@ class MainWindow(QMainWindow):
         ) = None
 
         self.channel_quality_worker: (
-            ChannelQualityWorker
-            | None
+            ChannelQualityWorker | None
+        ) = None
+
+        self.bridge_worker: (
+            BridgeDetectionWorker | None
         ) = None
 
         self.pipeline_config = (
             PipelineConfiguration.default()
+        )
+
+        self.bridge_settings = (
+            BridgeDetectionSettings()
         )
 
         # =====================================================
@@ -94,8 +110,8 @@ class MainWindow(QMainWindow):
         )
 
         self.resize(
-            1750,
-            1080,
+            1800,
+            1100,
         )
 
         # =====================================================
@@ -155,7 +171,7 @@ class MainWindow(QMainWindow):
 
         self.left_tabs.addTab(
             self.detection_panel,
-            "Detection",
+            "Artifacts",
         )
 
         self.left_tabs.setMinimumWidth(
@@ -175,19 +191,27 @@ class MainWindow(QMainWindow):
         )
 
         # =====================================================
-        # Right panels
+        # Right
         # =====================================================
 
         self.step_inspector = (
             StepInspector()
         )
 
-        self.review_panel = (
-            ReviewPanel()
-        )
-
         self.channel_quality_panel = (
             ChannelQualityPanel()
+        )
+
+        self.bridge_panel = (
+            BridgePanel()
+        )
+
+        self.bridge_panel.set_settings(
+            self.bridge_settings
+        )
+
+        self.review_panel = (
+            ReviewPanel()
         )
 
         self.right_tabs = (
@@ -205,16 +229,21 @@ class MainWindow(QMainWindow):
         )
 
         self.right_tabs.addTab(
+            self.bridge_panel,
+            "Bridges",
+        )
+
+        self.right_tabs.addTab(
             self.review_panel,
-            "Review Queue",
+            "Artifact Review",
         )
 
         self.right_tabs.setMinimumWidth(
-            360
+            380
         )
 
         # =====================================================
-        # Workspace
+        # Horizontal workspace
         # =====================================================
 
         self.horizontal_splitter = (
@@ -253,8 +282,8 @@ class MainWindow(QMainWindow):
         self.horizontal_splitter.setSizes(
             [
                 290,
-                1050,
-                390,
+                1080,
+                410,
             ]
         )
 
@@ -292,13 +321,13 @@ class MainWindow(QMainWindow):
 
         self.vertical_splitter.setSizes(
             [
-                720,
+                740,
                 340,
             ]
         )
 
         # =====================================================
-        # Signals: Pipeline
+        # Signals - Pipeline
         # =====================================================
 
         self.pipeline_panel.pipeline_changed.connect(
@@ -314,11 +343,11 @@ class MainWindow(QMainWindow):
         )
 
         # =====================================================
-        # Signals: Script
+        # Signals - Script
         # =====================================================
 
         self.script_preview.apply_requested.connect(
-            self._apply_script_to_pipeline
+            self._apply_script
         )
 
         self.script_preview.regenerate_requested.connect(
@@ -326,7 +355,7 @@ class MainWindow(QMainWindow):
         )
 
         # =====================================================
-        # Signals: artifact detection
+        # Artifact detection
         # =====================================================
 
         self.detection_panel.run_requested.connect(
@@ -342,7 +371,7 @@ class MainWindow(QMainWindow):
         )
 
         # =====================================================
-        # Signals: Channel Quality
+        # Channel quality
         # =====================================================
 
         self.channel_quality_panel.analyze_requested.connect(
@@ -358,12 +387,26 @@ class MainWindow(QMainWindow):
         )
 
         # =====================================================
+        # Bridge detection
+        # =====================================================
+
+        self.bridge_panel.analyze_requested.connect(
+            self.run_bridge_detection
+        )
+
+        self.bridge_panel.confirm_requested.connect(
+            self._confirm_bridge
+        )
+
+        self.bridge_panel.reject_requested.connect(
+            self._reject_bridge
+        )
+
+        # =====================================================
         # Root
         # =====================================================
 
-        root_layout = (
-            QVBoxLayout()
-        )
+        root_layout = QVBoxLayout()
 
         root_layout.addLayout(
             top_layout
@@ -416,7 +459,7 @@ class MainWindow(QMainWindow):
                 "Background task running",
                 (
                     "Wait for the current "
-                    "analysis to finish first."
+                    "analysis to finish."
                 ),
             )
 
@@ -445,9 +488,7 @@ class MainWindow(QMainWindow):
                 )
             )
 
-            self.recording = (
-                recording
-            )
+            self.recording = recording
 
             self.viewer.set_recording(
                 recording
@@ -467,40 +508,15 @@ class MainWindow(QMainWindow):
 
             self.channel_quality_panel.clear_results()
 
+            self.bridge_panel.clear_results()
+
             self.channel_quality_panel.refresh_bad_states(
                 recording.bad_channels
             )
 
-            self.info_label.setText(
-                (
-                    f"{recording.name}"
-                    "  •  "
-                    f"{recording.eeg_channel_count} "
-                    "EEG channels"
-                    "  •  "
-                    f"{recording.sampling_frequency:.0f} Hz"
-                    "  •  "
-                    f"{self._format_duration(recording.duration_seconds)}"
-                    "  •  "
-                    f"{len(recording.bad_channels)} bad"
-                )
-            )
+            self._refresh_recording_status()
 
-            current_step = (
-                self.pipeline_panel
-                .current_step()
-            )
-
-            if current_step is not None:
-                self.step_inspector.set_step(
-                    step=current_step,
-                    pipeline=(
-                        self.pipeline_config
-                    ),
-                    recording=(
-                        self.recording
-                    ),
-                )
+            self._refresh_step_inspector()
 
             self._update_script()
 
@@ -519,9 +535,7 @@ class MainWindow(QMainWindow):
         self,
         pipeline: PipelineConfiguration,
     ):
-        self.pipeline_config = (
-            pipeline
-        )
+        self.pipeline_config = pipeline
 
         self.viewer.set_pipeline_config(
             pipeline
@@ -576,136 +590,177 @@ class MainWindow(QMainWindow):
         )
 
     # =========================================================
-    # Script
+    # Bridge Detection
     # =========================================================
 
-    def _apply_script_to_pipeline(
+    def run_bridge_detection(
         self,
-        script: str,
+        settings: BridgeDetectionSettings,
     ):
-        try:
-            parsed_pipeline = (
-                parse_pipeline_script(
-                    script=script,
-                    current_pipeline=(
-                        self.pipeline_config
-                    ),
-                )
-            )
-
-            parsed_bad_channels = (
-                parse_bad_channels(
-                    script
-                )
-            )
-
-            if (
-                parsed_bad_channels
-                is not None
-            ):
-                if (
-                    self.recording
-                    is None
-                ):
-                    if parsed_bad_channels:
-                        raise ValueError(
-                            (
-                                "Open an EEG recording "
-                                "before applying "
-                                "BAD_CHANNELS."
-                            )
-                        )
-
-                else:
-                    self.recording.set_bad_channels(
-                        parsed_bad_channels
-                    )
-
-        except ValueError as error:
-            self.script_preview.set_status(
+        if self.recording is None:
+            QMessageBox.warning(
+                self,
+                "No EEG loaded",
                 (
-                    "Script configuration error:\n"
-                    f"{error}"
-                )
+                    "Open an EEG recording "
+                    "before detecting bridges."
+                ),
             )
 
             return
 
-        self.pipeline_config = (
-            parsed_pipeline
+        if self._worker_running():
+            return
+
+        self.bridge_settings = (
+            settings
         )
 
-        self.pipeline_panel.set_pipeline(
-            parsed_pipeline
-        )
-
-        self.viewer.set_pipeline_config(
-            parsed_pipeline
-        )
-
-        if self.recording is not None:
-            self.channel_quality_panel.refresh_bad_states(
-                self.recording.bad_channels
+        if not settings.enabled:
+            self.bridge_panel.set_results(
+                []
             )
 
+            self._update_script()
+
+            return
+
+        self.bridge_panel.set_running(
+            True
+        )
+
+        self.open_button.setEnabled(
+            False
+        )
+
+        self.bridge_worker = (
+            BridgeDetectionWorker(
+                recording=(
+                    self.recording
+                ),
+                settings=(
+                    settings
+                ),
+            )
+        )
+
+        self.bridge_worker.analysis_completed.connect(
+            self._bridge_detection_completed
+        )
+
+        self.bridge_worker.analysis_failed.connect(
+            self._bridge_detection_failed
+        )
+
+        self.bridge_worker.finished.connect(
+            self._background_worker_finished
+        )
+
+        self.bridge_worker.start()
+
+        self._update_script()
+
+    def _bridge_detection_completed(
+        self,
+        candidates: list,
+    ):
+        if self.recording is not None:
+            confirmed = {
+                frozenset(
+                    pair
+                )
+                for pair
+                in self.recording
+                .confirmed_bridge_pairs
+            }
+
+            for candidate in candidates:
+                pair = frozenset(
+                    (
+                        candidate.channel_a,
+                        candidate.channel_b,
+                    )
+                )
+
+                if pair in confirmed:
+                    candidate.confirmed = (
+                        True
+                    )
+
+        self.bridge_panel.set_results(
+            candidates
+        )
+
+        self.right_tabs.setCurrentWidget(
+            self.bridge_panel
+        )
+
+    def _bridge_detection_failed(
+        self,
+        message: str,
+    ):
+        self.bridge_panel.set_error(
+            message
+        )
+
+        QMessageBox.critical(
+            self,
+            "Bridge detection failed",
+            message,
+        )
+
+    def _confirm_bridge(
+        self,
+        candidate,
+    ):
+        if self.recording is None:
+            return
+
+        self.recording.confirm_bridge_pair(
+            candidate.channel_a,
+            candidate.channel_b,
+        )
+
+        candidate.confirmed = True
+
+        self.bridge_panel.sync_confirmed_pairs(
+            self.recording
+            .confirmed_bridge_pairs
+        )
+
+        self._bridge_state_changed()
+
+    def _reject_bridge(
+        self,
+        candidate,
+    ):
+        if self.recording is None:
+            return
+
+        self.recording.clear_bridge_pair(
+            candidate.channel_a,
+            candidate.channel_b,
+        )
+
+        candidate.confirmed = False
+
+        self.bridge_panel._populate_list(
+            selected_pair=(
+                candidate.channel_a,
+                candidate.channel_b,
+            )
+        )
+
+        self._bridge_state_changed()
+
+    def _bridge_state_changed(
+        self,
+    ):
         self._refresh_step_inspector()
 
         self._refresh_recording_status()
 
-        self.script_preview.set_status(
-            (
-                "✓ Script settings applied. "
-                "Pipeline, bad-channel state, "
-                "and processed preview updated."
-            )
-        )
-
-    def _regenerate_script(
-        self,
-    ):
         self._update_script()
-
-        self.script_preview.set_status(
-            (
-                "✓ Script regenerated "
-                "from current state."
-            )
-        )
-
-    def _update_script(
-        self,
-    ):
-        if self.recording is None:
-            path = None
-
-            bad_channels: list[
-                str
-            ] = []
-
-        else:
-            path = (
-                self.recording.source_path
-            )
-
-            bad_channels = (
-                self.recording.bad_channels
-            )
-
-        script = (
-            generate_pipeline_script(
-                pipeline=(
-                    self.pipeline_config
-                ),
-                input_path=path,
-                bad_channels=(
-                    bad_channels
-                ),
-            )
-        )
-
-        self.script_preview.set_script(
-            script
-        )
 
     # =========================================================
     # Channel Quality
@@ -799,10 +854,6 @@ class MainWindow(QMainWindow):
             message,
         )
 
-    # =========================================================
-    # Bad channel decisions
-    # =========================================================
-
     def _mark_bad_channel(
         self,
         channel: str,
@@ -810,19 +861,9 @@ class MainWindow(QMainWindow):
         if self.recording is None:
             return
 
-        try:
-            self.recording.mark_bad_channel(
-                channel
-            )
-
-        except ValueError as error:
-            QMessageBox.warning(
-                self,
-                "Unable to mark channel",
-                str(error),
-            )
-
-            return
+        self.recording.mark_bad_channel(
+            channel
+        )
 
         self._bad_channel_state_changed()
 
@@ -833,19 +874,9 @@ class MainWindow(QMainWindow):
         if self.recording is None:
             return
 
-        try:
-            self.recording.mark_good_channel(
-                channel
-            )
-
-        except ValueError as error:
-            QMessageBox.warning(
-                self,
-                "Unable to update channel",
-                str(error),
-            )
-
-            return
+        self.recording.mark_good_channel(
+            channel
+        )
 
         self._bad_channel_state_changed()
 
@@ -859,21 +890,18 @@ class MainWindow(QMainWindow):
             self.recording.bad_channels
         )
 
-        # Average-reference preview must recompute.
         self.viewer.set_pipeline_config(
             self.pipeline_config
         )
 
-        # Warnings now depend on bad-channel state.
         self._refresh_step_inspector()
-
-        # Script must remain reproducible.
-        self._update_script()
 
         self._refresh_recording_status()
 
+        self._update_script()
+
     # =========================================================
-    # Detection
+    # Artifact Detection
     # =========================================================
 
     def run_detection(
@@ -884,10 +912,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "No EEG loaded",
-                (
-                    "Open an EEG recording "
-                    "first."
-                ),
+                "Open an EEG recording first.",
             )
 
             return
@@ -979,10 +1004,6 @@ class MainWindow(QMainWindow):
             message,
         )
 
-    # =========================================================
-    # Candidate
-    # =========================================================
-
     def _candidate_updated(
         self,
         _candidate,
@@ -990,29 +1011,207 @@ class MainWindow(QMainWindow):
         self.viewer.render()
 
     # =========================================================
-    # Helpers
+    # Script
+    # =========================================================
+
+    def _apply_script(
+        self,
+        script: str,
+    ):
+        try:
+            parsed_pipeline = (
+                parse_pipeline_script(
+                    script=script,
+                    current_pipeline=(
+                        self.pipeline_config
+                    ),
+                )
+            )
+
+            parsed_bad_channels = (
+                parse_bad_channels(
+                    script
+                )
+            )
+
+            parsed_bridge_settings = (
+                parse_bridge_settings(
+                    script=script,
+                    current_settings=(
+                        self.bridge_settings
+                    ),
+                )
+            )
+
+            parsed_bridges = (
+                parse_confirmed_bridges(
+                    script
+                )
+            )
+
+            if self.recording is None:
+                if parsed_bad_channels:
+                    raise ValueError(
+                        (
+                            "Open an EEG before "
+                            "applying BAD_CHANNELS."
+                        )
+                    )
+
+                if parsed_bridges:
+                    raise ValueError(
+                        (
+                            "Open an EEG before "
+                            "applying CONFIRMED_BRIDGES."
+                        )
+                    )
+
+            else:
+                if (
+                    parsed_bad_channels
+                    is not None
+                ):
+                    self.recording.set_bad_channels(
+                        parsed_bad_channels
+                    )
+
+                if parsed_bridges is not None:
+                    self.recording.set_confirmed_bridge_pairs(
+                        parsed_bridges
+                    )
+
+        except ValueError as error:
+            self.script_preview.set_status(
+                (
+                    "Script configuration error:\n"
+                    f"{error}"
+                )
+            )
+
+            return
+
+        self.pipeline_config = (
+            parsed_pipeline
+        )
+
+        self.bridge_settings = (
+            parsed_bridge_settings
+        )
+
+        self.pipeline_panel.set_pipeline(
+            parsed_pipeline
+        )
+
+        self.bridge_panel.set_settings(
+            parsed_bridge_settings
+        )
+
+        self.viewer.set_pipeline_config(
+            parsed_pipeline
+        )
+
+        if self.recording is not None:
+            self.channel_quality_panel.refresh_bad_states(
+                self.recording.bad_channels
+            )
+
+            self.bridge_panel.sync_confirmed_pairs(
+                self.recording
+                .confirmed_bridge_pairs
+            )
+
+        self._refresh_step_inspector()
+
+        self._refresh_recording_status()
+
+        self.script_preview.set_status(
+            (
+                "✓ Script settings applied "
+                "to pipeline, channel state, "
+                "and bridge state."
+            )
+        )
+
+    def _regenerate_script(
+        self,
+    ):
+        self._update_script()
+
+        self.script_preview.set_status(
+            (
+                "✓ Script regenerated "
+                "from current Synaptix state."
+            )
+        )
+
+    def _update_script(
+        self,
+    ):
+        if self.recording is None:
+            path = None
+
+            bad_channels = []
+
+            confirmed_bridges = []
+
+        else:
+            path = (
+                self.recording
+                .source_path
+            )
+
+            bad_channels = (
+                self.recording
+                .bad_channels
+            )
+
+            confirmed_bridges = (
+                self.recording
+                .confirmed_bridge_pairs
+            )
+
+        script = (
+            generate_pipeline_script(
+                pipeline=(
+                    self.pipeline_config
+                ),
+                input_path=path,
+                bad_channels=(
+                    bad_channels
+                ),
+                bridge_settings=(
+                    self.bridge_settings
+                ),
+                confirmed_bridges=(
+                    confirmed_bridges
+                ),
+            )
+        )
+
+        self.script_preview.set_script(
+            script
+        )
+
+    # =========================================================
+    # General helpers
     # =========================================================
 
     def _worker_running(
         self,
     ) -> bool:
-        detection_running = (
-            self.detection_worker
-            is not None
-            and self.detection_worker
-            .isRunning()
-        )
+        workers = [
+            self.detection_worker,
+            self.channel_quality_worker,
+            self.bridge_worker,
+        ]
 
-        channel_running = (
-            self.channel_quality_worker
-            is not None
-            and self.channel_quality_worker
-            .isRunning()
-        )
-
-        return (
-            detection_running
-            or channel_running
+        return any(
+            (
+                worker is not None
+                and worker.isRunning()
+            )
+            for worker
+            in workers
         )
 
     def _background_worker_finished(
@@ -1061,6 +1260,9 @@ class MainWindow(QMainWindow):
                 f"{self._format_duration(self.recording.duration_seconds)}"
                 "  •  "
                 f"{len(self.recording.bad_channels)} bad"
+                "  •  "
+                f"{len(self.recording.confirmed_bridge_pairs)} "
+                "confirmed bridge(s)"
             )
         )
 
@@ -1076,15 +1278,18 @@ class MainWindow(QMainWindow):
         )
 
         hours = (
-            seconds // 3600
+            seconds
+            // 3600
         )
 
         minutes = (
-            seconds % 3600
+            seconds
+            % 3600
         ) // 60
 
         remaining = (
-            seconds % 60
+            seconds
+            % 60
         )
 
         if hours:

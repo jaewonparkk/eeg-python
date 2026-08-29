@@ -15,10 +15,11 @@ class Recording:
         source_path: Path,
     ):
         self._raw = raw
+        self.source_path = source_path
 
-        self.source_path = (
-            source_path
-        )
+        self._confirmed_bridge_pairs: list[
+            tuple[str, str]
+        ] = []
 
     # =========================================================
     # Construction
@@ -122,6 +123,21 @@ class Recording:
         )
 
     # =========================================================
+    # Raw copy
+    # =========================================================
+
+    def copy_raw(
+        self,
+        load_data: bool = False,
+    ) -> BaseRaw:
+        raw = self._raw.copy()
+
+        if load_data:
+            raw.load_data()
+
+        return raw
+
+    # =========================================================
     # Bad channels
     # =========================================================
 
@@ -139,13 +155,9 @@ class Recording:
         self,
         channel: str,
     ):
-        if channel not in self.channels:
-            raise ValueError(
-                (
-                    "Unknown channel: "
-                    f"{channel}"
-                )
-            )
+        self._validate_channel(
+            channel
+        )
 
         bads = list(
             self._raw.info[
@@ -166,15 +178,13 @@ class Recording:
         self,
         channel: str,
     ):
-        if channel not in self.channels:
-            raise ValueError(
-                (
-                    "Unknown channel: "
-                    f"{channel}"
-                )
-            )
+        self._validate_channel(
+            channel
+        )
 
-        bads = [
+        self._raw.info[
+            "bads"
+        ] = [
             bad
             for bad
             in self._raw.info[
@@ -183,41 +193,140 @@ class Recording:
             if bad != channel
         ]
 
-        self._raw.info[
-            "bads"
-        ] = bads
-
     def set_bad_channels(
         self,
         channels: list[str],
     ):
-        unknown = [
-            channel
-            for channel in channels
-            if channel
-            not in self.channels
-        ]
-
-        if unknown:
-            raise ValueError(
-                (
-                    "Unknown bad channels: "
-                    + ", ".join(
-                        unknown
-                    )
-                )
+        for channel in channels:
+            self._validate_channel(
+                channel
             )
 
-        ordered = [
+        self._raw.info[
+            "bads"
+        ] = [
             channel
             for channel
             in self.channels
             if channel in channels
         ]
 
-        self._raw.info[
-            "bads"
-        ] = ordered
+    # =========================================================
+    # Confirmed electrode bridges
+    # =========================================================
+
+    @property
+    def confirmed_bridge_pairs(
+        self,
+    ) -> list[
+        tuple[str, str]
+    ]:
+        return list(
+            self._confirmed_bridge_pairs
+        )
+
+    def confirm_bridge_pair(
+        self,
+        channel_a: str,
+        channel_b: str,
+    ):
+        pair = self._normalize_pair(
+            channel_a,
+            channel_b,
+        )
+
+        if (
+            pair
+            not in self._confirmed_bridge_pairs
+        ):
+            self._confirmed_bridge_pairs.append(
+                pair
+            )
+
+    def clear_bridge_pair(
+        self,
+        channel_a: str,
+        channel_b: str,
+    ):
+        pair = self._normalize_pair(
+            channel_a,
+            channel_b,
+        )
+
+        self._confirmed_bridge_pairs = [
+            existing
+            for existing
+            in self._confirmed_bridge_pairs
+            if existing != pair
+        ]
+
+    def set_confirmed_bridge_pairs(
+        self,
+        pairs: list[
+            tuple[str, str]
+        ],
+    ):
+        normalized: list[
+            tuple[str, str]
+        ] = []
+
+        for (
+            channel_a,
+            channel_b,
+        ) in pairs:
+            pair = self._normalize_pair(
+                channel_a,
+                channel_b,
+            )
+
+            if pair not in normalized:
+                normalized.append(
+                    pair
+                )
+
+        self._confirmed_bridge_pairs = (
+            normalized
+        )
+
+    def _normalize_pair(
+        self,
+        channel_a: str,
+        channel_b: str,
+    ) -> tuple[str, str]:
+        self._validate_channel(
+            channel_a
+        )
+
+        self._validate_channel(
+            channel_b
+        )
+
+        if channel_a == channel_b:
+            raise ValueError(
+                (
+                    "A bridge pair must contain "
+                    "two different channels."
+                )
+            )
+
+        index_a = self.channels.index(
+            channel_a
+        )
+
+        index_b = self.channels.index(
+            channel_b
+        )
+
+        if index_a <= index_b:
+            return (
+                channel_a,
+                channel_b,
+            )
+
+        return (
+            channel_b,
+            channel_a,
+        )
 
     # =========================================================
     # Window access
@@ -282,3 +391,19 @@ class Recording:
             data,
             times,
         )
+
+    # =========================================================
+    # Validation
+    # =========================================================
+
+    def _validate_channel(
+        self,
+        channel: str,
+    ):
+        if channel not in self.channels:
+            raise ValueError(
+                (
+                    "Unknown channel: "
+                    f"{channel}"
+                )
+            )
